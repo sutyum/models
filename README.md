@@ -15,3 +15,4 @@ Learning by implementing core papers
 
 ## Generative Models
 - [Masked Autoregressive Flow](https://arxiv.org/abs/1705.07057)
+- [VAE, 2013](https://arxiv.org/abs/1312.6114): With ELBO
