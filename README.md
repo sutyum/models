@@ -14,7 +14,7 @@ Learning by implementing core papers
 > Read: [Traversing Knowledge Graphs in Vector Space, 2015](https://arxiv.org/pdf/1506.01094)
 
 ## Generative Models
-- [VAE, 2013](https://arxiv.org/abs/1312.6114): With ELBO
+- [Variational Autoencoder, 2013](https://arxiv.org/abs/1312.6114): With ELBO
 - [Masked Autoregressive Flow, 2018](https://arxiv.org/abs/1705.07057)
 
 ### Transformer Models
