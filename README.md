@@ -19,5 +19,6 @@ Learning by implementing core papers
 
 ### Transformer Models
 - [GPT2, 2019](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf)
+- [ColBERT, 2020](https://arxiv.org/abs/2004.12832)
 - [Llama 3.1, 2024](https://ai.meta.com/research/publications/the-llama-3-herd-of-models/): Inference
 - [Llama-omni, 2024](https://github.com/sutyum/LLaMA-Omni)
