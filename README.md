@@ -16,3 +16,8 @@ Learning by implementing core papers
 ## Generative Models
 - [VAE, 2013](https://arxiv.org/abs/1312.6114): With ELBO
 - [Masked Autoregressive Flow, 2018](https://arxiv.org/abs/1705.07057)
+
+### Transformer Models
+- [GPT2, 2019](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf)
+- [Llama 3.1, 2024](https://ai.meta.com/research/publications/the-llama-3-herd-of-models/): Inference
+- [Llama-omni, 2024](https://github.com/sutyum/LLaMA-Omni)
