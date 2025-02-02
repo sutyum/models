@@ -334,7 +334,9 @@ class DataLoaderLite:
 
         # get the shard filenames
         data_root = "edu_fineweb10B"
-        data_root = os.path.join("/workspace", data_root)
+        WORKSPACE_DIR = "./"
+        # WORKSPACE_DIR = "/workspace"
+        data_root = os.path.join(WORKSPACE_DIR, data_root)
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
@@ -496,7 +498,7 @@ if __name__ == "__main__":
         torch.cuda.manual_seed(1337)
 
     total_batch_size = 524_288 # 2**19, ~0.5M tokens, GPT 2's batch size
-    B = 32 # micro batch size (can fit on this GPU)
+    B = 4 # micro batch size (can fit on this GPU)
     T = 1024 # sequence length
     assert total_batch_size % (B * T * ddp_world_size) == 0, "make sure total_batch_size is divisible by B*T"
     grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
