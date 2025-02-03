@@ -142,7 +142,7 @@ if __name__ == "__main__":
           device = "mps"
       print(f"using device: {device}")
       device_type = device
-    
+
     print(f"{device=}: {ddp_rank=}, {ddp_world_size=}, {ddp_local_rank=}")
 
     # Set the random seed for reproducibility

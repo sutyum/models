@@ -25,7 +25,8 @@ class DataLoaderLite:
         shards = [s for s in shards if split in s]
         shards = sorted(shards)
         shards = [os.path.join(data_root, s) for s in shards]
-        self.shards = shards
+        self.shards = shards[:1]
+        # self.shards = shards
         assert len(shards) > 0, f"no shards found for split {split}"
         if master_process:
             print(f"found {len(shards)} shards for split {split}")

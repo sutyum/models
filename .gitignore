@@ -167,3 +167,4 @@ edu_fineweb10B
 huggingface_cache
 hellaswag
 **/log
+*.png
