@@ -1,19 +1,13 @@
-[tool.poetry]
+[project]
 name = "gptlike"
 version = "0.1.0"
-description = ""
-authors = ["Satyam Tiwary <satyam@technoculture.io>"]
+description = "Add your description here"
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = ">3.10.9"
-torch = "^2.3.1"
-transformers = "^4.41.2"
-tiktoken = "^0.7.0"
-matplotlib = "^3.9.1"
-datasets = "^2.20.0"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires-python = ">=3.12"
+dependencies = [
+    "dataset>=1.6.2",
+    "matplotlib>=3.10.0",
+    "tiktoken>=0.8.0",
+    "torch>=2.6.0",
+    "transformers>=4.48.2",
+]
