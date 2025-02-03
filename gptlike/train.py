@@ -6,7 +6,7 @@ from torch.nn import functional as F
 import tiktoken
 import numpy as np
 import matplotlib.pyplot as plt
-from hellaswag import render_example, iterate_examples
+from eval.hellaswag import render_example, iterate_examples
 
 from models.gpt2 import GPT2, GPTConfig
 from dataloader import DataLoaderLite
