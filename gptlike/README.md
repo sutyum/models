@@ -1,8 +1,6 @@
 # Things with a LLM Backbone
 
 - [x] GPT2 (Karpathy)
-- [ ] Qwen 2.5 0.5B
-- [ ] Differential Attention
+- [ ] Qwen 3 0.6B
 - [ ] SigLip Encoder
-- [ ] VQ-VAE Decoder for audio
-- [ ] RLVR with GRPO on GPT2
+- [ ] RLVR with GRPO on Qwen 3 0.6B
