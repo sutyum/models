@@ -168,3 +168,4 @@ huggingface_cache
 hellaswag
 **/log
 *.png
+.DS_Store

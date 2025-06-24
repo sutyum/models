@@ -9,7 +9,7 @@ from typing import List, Dict, Optional
 
 import dspy
 from dspy.evaluate import Evaluate
-from dspy.teleprompt import MIPRO
+from dspy.teleprompt import MIPROv2 as MIPRO
 
 from locomo.dataset import load_locomo_dataset
 from locomo.modules import create_module
@@ -60,18 +60,19 @@ def optimize_with_mipro(module, train_set: List, val_set: List, metric_name: str
     
     metric_fn = LocomoPaperMetrics.get_metric(metric_name)
     
-    # Initialize MIPRO optimizer
+    # Initialize MIPRO optimizer with correct parameters
     mipro_optimizer = MIPRO(
         metric=metric_fn,
-        num_trials=num_trials,
         max_bootstrapped_demos=max_bootstrapped_demos,
         max_labeled_demos=max_labeled_demos,
         init_temperature=init_temperature,
-        verbose=True
+        auto="light",  # Use auto mode instead of num_trials
+        verbose=True,
+        track_stats=True
     )
     
     # Run optimization
-    print(f"📈 Optimizing with {num_trials} trials...")
+    print(f"📈 Optimizing in 'light' mode...")
     optimized_module = mipro_optimizer.compile(
         student=module,
         trainset=train_set,
@@ -85,28 +86,36 @@ def optimize_with_mipro(module, train_set: List, val_set: List, metric_name: str
 def detailed_evaluation(examples: List, module, metric_names: List[str] = None):
     """Run detailed evaluation with multiple metrics."""
     if metric_names is None:
-        metric_names = ["f1", "exact_match", "category_aware", "comprehensive"]
+        metric_names = ["locomo_paper"]
     
     print("📋 Running detailed evaluation...")
     
     predictions = []
     for example in examples:
         try:
-            pred = module(conversation=example.conversation, question=example.question)
+            # Check if module accepts category parameter
+            if hasattr(module, 'forward') and 'category' in module.forward.__code__.co_varnames:
+                pred = module(conversation=example.conversation, question=example.question, category=example.category)
+            else:
+                pred = module(conversation=example.conversation, question=example.question)
             predictions.append(pred)
         except Exception as e:
             print(f"Error processing example: {e}")
             # Create dummy prediction
             predictions.append(dspy.Prediction(answer=""))
     
-    results = {}
-    for metric_name in metric_names:
-        result = LocomoMetrics.evaluate_predictions(examples, predictions, metric_name)
-        results[metric_name] = result
-        print(f"{metric_name.upper()} Results:")
-        for key, value in result.items():
-            print(f"  {key}: {value:.3f}" if isinstance(value, float) else f"  {key}: {value}")
-        print()
+    # Use paper-accurate evaluation
+    results = LocomoPaperMetrics.evaluate_with_paper_metrics(examples, predictions)
+    
+    print(f"Overall Score: {results['overall_score']:.3f}")
+    print(f"Total Examples: {results['total_examples']}")
+    
+    # Print category breakdowns if available
+    for cat in range(1, 6):
+        score_key = f"category_{cat}_score"
+        count_key = f"category_{cat}_count"
+        if score_key in results and count_key in results:
+            print(f"Category {cat}: {results[score_key]:.3f} ({results[count_key]} examples)")
     
     return results, predictions
 
@@ -139,14 +148,14 @@ def main():
     )
     parser.add_argument(
         "--module-type",
-        default="chain_of_thought",
-        choices=["basic", "chain_of_thought", "category_aware", "multi_step"],
+        default="paper_accurate",
+        choices=["paper_accurate", "memory_aware", "simple"],
         help="Type of DSPy module to use"
     )
     parser.add_argument(
         "--metric",
-        default="f1",
-        choices=["f1", "exact_match", "category_aware", "comprehensive"],
+        default="locomo_paper",
+        choices=["locomo_paper", "multi_hop", "temporal", "unanswerable", "ambiguous"],
         help="Evaluation metric to optimize"
     )
     parser.add_argument(
@@ -156,10 +165,10 @@ def main():
         help="Number of examples to use (default: all)"
     )
     parser.add_argument(
-        "--num-trials",
-        type=int,
-        default=50,
-        help="Number of MIPRO optimization trials"
+        "--auto-mode",
+        default="light",
+        choices=["light", "medium", "heavy"],
+        help="MIPRO auto optimization mode"
     )
     parser.add_argument(
         "--max-demos",
@@ -247,7 +256,6 @@ def main():
             train_set=train_set,
             val_set=val_set,
             metric_name=args.metric,
-            num_trials=args.num_trials,
             max_labeled_demos=args.max_demos
         )
         
