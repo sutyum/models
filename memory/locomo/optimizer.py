@@ -11,9 +11,9 @@ import dspy
 from dspy.evaluate import Evaluate
 from dspy.teleprompt import MIPRO
 
-from locomo.dspy_dataset import load_locomo_dataset
-from locomo.dspy_modules import create_module
-from locomo.dspy_metrics import LocomoPaperMetrics
+from locomo.dataset import load_locomo_dataset
+from locomo.modules import create_module
+from locomo.metrics import LocomoPaperMetrics
 
 
 def setup_language_model(model_name: str = "openai/gpt-4o-mini", api_key: Optional[str] = None):
@@ -150,10 +150,10 @@ def main():
         help="Evaluation metric to optimize"
     )
     parser.add_argument(
-        "--limit-examples",
+        "--limit",
         type=int,
-        default=100,
-        help="Limit number of examples for faster experimentation"
+        default=None,
+        help="Number of examples to use (default: all)"
     )
     parser.add_argument(
         "--num-trials",
@@ -214,11 +214,11 @@ def main():
     if args.categories:
         examples = dataset.get_category_split(
             args.categories, 
-            limit_per_category=args.limit_examples // len(args.categories)
+            limit_per_category=args.limit // len(args.categories) if args.limit else None
         )
         print(f"🎯 Using categories {args.categories}: {len(examples)} examples")
     else:
-        examples = dataset.get_examples(limit=args.limit_examples)
+        examples = dataset.get_examples(limit=args.limit)
         print(f"📊 Using {len(examples)} examples")
     
     # Split data

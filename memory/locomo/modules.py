@@ -244,51 +244,51 @@ def create_module(module_type: str = "paper_accurate") -> dspy.Module:
         raise ValueError(f"Unknown module type: {module_type}")
 
 
-if __name__ == "__main__":
-    # Example usage
-    import os
-
-    # Configure DSPy with a language model
-    lm = dspy.LM("openai/gpt-4o-mini", api_key=os.environ.get("OPENAI_API_KEY", ""))
-    dspy.configure(lm=lm)
-
-    # Create paper-accurate module
-    qa_module = create_module("paper_accurate")
-
-    # Example conversation
-    conversation = """
-    DATE: 2023-05-01
-    CONVERSATION:
-    Alice: "I'm planning to visit the new art museum next week."
-    Bob: "Which one? The modern art museum or the classical one?"
-    Alice: "The modern art museum. They have a new exhibition on contemporary sculpture."
-    
-    DATE: 2023-05-08
-    CONVERSATION:
-    Alice: "I went to the museum yesterday. The sculpture exhibition was amazing!"
-    Bob: "Did you see the piece by the famous artist we discussed?"
-    Alice: "Yes! The metal sculpture was incredible. Very thought-provoking."
-    """
-
-    # Test different question categories
-
-    # Category 1: Multi-hop
-    question1 = "What type of art did Alice see at the museum she planned to visit?"
-    result1 = qa_module(conversation=conversation, question=question1, category=1)
-    print(f"Multi-hop Q: {question1}")
-    print(f"Answer: {result1.answer}")
-    print(f"Reasoning: {result1.reasoning}\n")
-
-    # Category 2: Temporal
-    question2 = "When did Alice actually visit the museum?"
-    result2 = qa_module(conversation=conversation, question=question2, category=2)
-    print(f"Temporal Q: {question2}")
-    print(f"Answer: {result2.answer}")
-    print(f"Reasoning: {result2.reasoning}\n")
-
-    # Category 4: Unanswerable
-    question4 = "How much did Alice pay for the museum ticket?"
-    result4 = qa_module(conversation=conversation, question=question4, category=4)
-    print(f"Unanswerable Q: {question4}")
-    print(f"Answer: {result4.answer}")
-    print(f"Analysis: {result4.reasoning}")
+# if __name__ == "__main__":
+#     # Example usage
+#     import os
+#
+#     # Configure DSPy with a language model
+#     lm = dspy.LM("openai/gpt-4o-mini", api_key=os.environ.get("OPENAI_API_KEY", ""))
+#     dspy.configure(lm=lm)
+#
+#     # Create paper-accurate module
+#     qa_module = create_module("paper_accurate")
+#
+#     # Example conversation
+#     conversation = """
+#     DATE: 2023-05-01
+#     CONVERSATION:
+#     Alice: "I'm planning to visit the new art museum next week."
+#     Bob: "Which one? The modern art museum or the classical one?"
+#     Alice: "The modern art museum. They have a new exhibition on contemporary sculpture."
+#
+#     DATE: 2023-05-08
+#     CONVERSATION:
+#     Alice: "I went to the museum yesterday. The sculpture exhibition was amazing!"
+#     Bob: "Did you see the piece by the famous artist we discussed?"
+#     Alice: "Yes! The metal sculpture was incredible. Very thought-provoking."
+#     """
+#
+#     # Test different question categories
+#
+#     # Category 1: Multi-hop
+#     question1 = "What type of art did Alice see at the museum she planned to visit?"
+#     result1 = qa_module(conversation=conversation, question=question1, category=1)
+#     print(f"Multi-hop Q: {question1}")
+#     print(f"Answer: {result1.answer}")
+#     print(f"Reasoning: {result1.reasoning}\n")
+#
+#     # Category 2: Temporal
+#     question2 = "When did Alice actually visit the museum?"
+#     result2 = qa_module(conversation=conversation, question=question2, category=2)
+#     print(f"Temporal Q: {question2}")
+#     print(f"Answer: {result2.answer}")
+#     print(f"Reasoning: {result2.reasoning}\n")
+#
+#     # Category 4: Unanswerable
+#     question4 = "How much did Alice pay for the museum ticket?"
+#     result4 = qa_module(conversation=conversation, question=question4, category=4)
+#     print(f"Unanswerable Q: {question4}")
+#     print(f"Answer: {result4.answer}")
+#     print(f"Analysis: {result4.reasoning}")

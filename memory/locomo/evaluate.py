@@ -11,25 +11,27 @@ from typing import List, Tuple
 
 import dspy
 from tqdm import tqdm
-from locomo.dspy_dataset import load_locomo_dataset
-from locomo.dspy_modules import create_module
-from locomo.dspy_metrics import LocomoPaperMetrics
+from locomo.dataset import load_locomo_dataset
+from locomo.modules import create_module
+from locomo.metrics import LocomoPaperMetrics
 
 
-def evaluate_single_example(example: dspy.Example, module: dspy.Module, verbose: bool = False) -> Tuple[dspy.Prediction, float]:
+def evaluate_single_example(
+    example: dspy.Example, module: dspy.Module, verbose: bool = False
+) -> Tuple[dspy.Prediction, float]:
     """Evaluate a single example and return prediction and score."""
     try:
         # Pass category to the module for paper-accurate handling
         pred = module(
             conversation=example.conversation,
             question=example.question,
-            category=example.category,
+            # category=example.category,
         )
-        
+
         # Calculate score for this example
         paper_metric = LocomoPaperMetrics.get_metric("locomo_paper")
         score = paper_metric(example, pred)
-        
+
         if verbose:
             print(f"Question: {example.question}")
             print(f"Ground Truth: {example.answer}")
@@ -41,9 +43,9 @@ def evaluate_single_example(example: dspy.Example, module: dspy.Module, verbose:
                 print(f"Question Type: {pred.question_type}")
             print(f"Paper-accurate Score: {score:.3f}")
             print("-" * 50)
-        
+
         return pred, score
-        
+
     except Exception as e:
         if verbose:
             print(f"❌ Error processing example: {e}")
@@ -63,7 +65,10 @@ def main():
         choices=["paper_accurate", "memory_aware", "simple"],
     )
     parser.add_argument(
-        "--limit", type=int, default=20, help="Number of examples to evaluate"
+        "--limit",
+        type=int,
+        default=None,
+        help="Number of examples to evaluate (default: all)",
     )
     parser.add_argument(
         "--model", default="openai/gpt-4o-mini", help="Language model to use"
@@ -76,7 +81,12 @@ def main():
         help="Specific categories to test (1-5)",
     )
     parser.add_argument("--verbose", action="store_true", help="Show detailed output")
-    parser.add_argument("--max-workers", type=int, default=4, help="Number of parallel workers for evaluation")
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Number of parallel workers for evaluation",
+    )
 
     args = parser.parse_args()
 
@@ -119,36 +129,40 @@ def main():
         for example in tqdm(examples, desc="Evaluating", unit="examples"):
             pred, score = evaluate_single_example(example, module, args.verbose)
             predictions.append(pred)
-            
+
             # Group by category for detailed analysis
             category_examples[example.category].append(example)
             category_predictions[example.category].append(pred)
     else:
         # Parallel processing with progress bar
         print(f"Using {args.max_workers} parallel workers")
-        
+
         # Note: DSPy modules need to be recreated in each thread due to internal state
         def evaluate_with_module(example):
             # Create a new module instance for this thread
             thread_module = create_module(args.module_type)
-            return evaluate_single_example(example, thread_module, False)  # Disable verbose in parallel mode
-        
+            return evaluate_single_example(
+                example, thread_module, False
+            )  # Disable verbose in parallel mode
+
         with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
             # Submit all tasks
             future_to_example = {
-                executor.submit(evaluate_with_module, example): example 
+                executor.submit(evaluate_with_module, example): example
                 for example in examples
             }
-            
+
             # Collect results with progress bar
-            for future in tqdm(as_completed(future_to_example), 
-                             total=len(examples), 
-                             desc="Evaluating", 
-                             unit="examples"):
+            for future in tqdm(
+                as_completed(future_to_example),
+                total=len(examples),
+                desc="Evaluating",
+                unit="examples",
+            ):
                 example = future_to_example[future]
                 pred, score = future.result()
                 predictions.append(pred)
-                
+
                 # Group by category for detailed analysis
                 category_examples[example.category].append(example)
                 category_predictions[example.category].append(pred)
