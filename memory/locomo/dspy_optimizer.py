@@ -12,8 +12,8 @@ from dspy.evaluate import Evaluate
 from dspy.teleprompt import MIPRO
 
 from locomo.dspy_dataset import load_locomo_dataset
-from locomo.dspy_modules import create_locomo_qa_module
-from locomo.dspy_metrics import LocomoMetrics
+from locomo.dspy_modules import create_module
+from locomo.dspy_metrics import LocomoPaperMetrics
 
 
 def setup_language_model(model_name: str = "openai/gpt-4o-mini", api_key: Optional[str] = None):
@@ -36,7 +36,7 @@ def run_baseline_evaluation(dataset, module, metric_name: str = "f1",
     if test_set is None:
         test_set = dataset.get_examples(limit=limit)
     
-    metric_fn = LocomoMetrics.get_metric(metric_name)
+    metric_fn = LocomoPaperMetrics.get_metric(metric_name)
     
     # Use DSPy's Evaluate utility
     evaluator = Evaluate(
@@ -58,7 +58,7 @@ def optimize_with_mipro(module, train_set: List, val_set: List, metric_name: str
     """Optimize the module using MIPRO."""
     print("🚀 Starting MIPRO optimization...")
     
-    metric_fn = LocomoMetrics.get_metric(metric_name)
+    metric_fn = LocomoPaperMetrics.get_metric(metric_name)
     
     # Initialize MIPRO optimizer
     mipro_optimizer = MIPRO(
@@ -235,7 +235,7 @@ def main():
     
     # Create module
     print(f"🤖 Creating {args.module_type} module...")
-    module = create_locomo_qa_module(args.module_type)
+    module = create_module(args.module_type)
     
     # Baseline evaluation
     baseline_score = run_baseline_evaluation(dataset, module, args.metric, test_set)
