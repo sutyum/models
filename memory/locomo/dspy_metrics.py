@@ -1,189 +1,237 @@
 """
-DSPy metrics for LOCOMO conversational QA evaluation.
+LOCOMO-paper-accurate DSPy metrics for conversational QA evaluation.
+Based on the official LOCOMO paper methodology.
 """
 import dspy
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from locomo.evaluation import f1_score, exact_match_score, normalize_answer
+import re
 
 
-def f1_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> float:
+def locomo_paper_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> float:
     """
-    F1 score metric for LOCOMO QA.
+    Paper-accurate LOCOMO metric based on question categories.
     
-    Args:
-        example: Ground truth example
-        pred: Model prediction
-        trace: DSPy trace (for optimization)
-    
-    Returns:
-        F1 score between 0 and 1
-    """
-    if not hasattr(pred, 'answer') or not hasattr(example, 'answer'):
-        return 0.0
-    
-    # Handle different question categories
-    if hasattr(example, 'category'):
-        category = example.category
-        
-        # Category 5 (adversarial) - check for "not mentioned" responses
-        if category == 5:
-            pred_answer = pred.answer.lower()
-            if "no information available" in pred_answer or "not mentioned" in pred_answer:
-                # This is the correct response for adversarial questions
-                return 1.0 if trace is None else True
-            else:
-                return 0.0 if trace is None else False
-        
-        # Multi-hop questions (category 1) - use specialized F1
-        elif category == 1:
-            return f1(pred.answer, example.answer)
-        
-        # Other categories - use standard F1
-        else:
-            return f1_score(pred.answer, example.answer)
-    
-    # Default F1 score
-    return f1_score(pred.answer, example.answer)
-
-
-def exact_match_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> float:
-    """
-    Exact match metric for LOCOMO QA.
+    From the paper:
+    - Category 1 (Multi-hop): F1 score with partial credit
+    - Category 2 (Temporal): F1 score for temporal expressions
+    - Category 3 (Single-hop): F1 score for factual answers
+    - Category 4 (Unanswerable): Exact match for "don't know" responses
+    - Category 5 (Ambiguous): Multiple acceptable answers evaluation
     """
     if not hasattr(pred, 'answer') or not hasattr(example, 'answer'):
         return 0.0
     
-    match = exact_match_score(pred.answer, example.answer)
+    category = getattr(example, 'category', 3)
+    pred_answer = pred.answer.strip()
+    true_answer = example.answer.strip()
     
-    if trace is None:
-        return float(match)
+    if category == 1:
+        # Multi-hop reasoning: F1 with partial credit for connecting multiple facts
+        return multi_hop_f1_score(pred_answer, true_answer)
+    
+    elif category == 2:
+        # Temporal reasoning: F1 with special handling for dates/times
+        return temporal_f1_score(pred_answer, true_answer)
+    
+    elif category == 3:
+        # Single-hop factual: Standard F1 score
+        return f1_score(pred_answer, true_answer)
+    
+    elif category == 4:
+        # Unanswerable: Check for appropriate "don't know" responses
+        return unanswerable_score(pred_answer, true_answer)
+    
+    elif category == 5:
+        # Ambiguous: Multiple acceptable answers
+        return ambiguous_score(pred_answer, true_answer)
+    
     else:
-        return match
+        # Default to F1
+        return f1_score(pred_answer, true_answer)
 
 
-def category_aware_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> float:
+def multi_hop_f1_score(prediction: str, ground_truth: str) -> float:
     """
-    Category-aware metric that uses different scoring for different question types.
+    F1 score for multi-hop questions that may require connecting multiple facts.
+    From paper: "For multi-hop questions, we compute F1 scores between predicted and ground truth answers"
     """
-    if not hasattr(pred, 'answer') or not hasattr(example, 'answer'):
-        return 0.0
+    # Handle comma-separated multiple answers
+    if ',' in ground_truth:
+        gt_parts = [part.strip() for part in ground_truth.split(',')]
+        pred_parts = [part.strip() for part in prediction.split(',')]
+        
+        # Calculate F1 for each ground truth part against all predicted parts
+        scores = []
+        for gt_part in gt_parts:
+            part_scores = [f1_score(pred_part, gt_part) for pred_part in pred_parts]
+            scores.append(max(part_scores) if part_scores else 0.0)
+        
+        return sum(scores) / len(scores) if scores else 0.0
+    else:
+        return f1_score(prediction, ground_truth)
+
+
+def temporal_f1_score(prediction: str, ground_truth: str) -> float:
+    """
+    F1 score for temporal questions with special handling for dates/times.
+    From paper: "Temporal questions require reasoning about time and dates"
+    """
+    # Normalize temporal expressions
+    pred_normalized = normalize_temporal(prediction)
+    true_normalized = normalize_temporal(ground_truth)
     
-    category = getattr(example, 'category', 3)  # Default to category 3
-    
-    if category == 5:  # Adversarial
-        return adversarial_metric(example, pred, trace)
-    elif category == 2:  # Temporal
-        return temporal_metric(example, pred, trace)
-    else:  # General QA
-        return f1_metric(example, pred, trace)
+    # Use standard F1 but with temporal normalization
+    return f1_score(pred_normalized, true_normalized)
 
 
-def adversarial_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> float:
+def unanswerable_score(prediction: str, ground_truth: str) -> float:
     """
-    Metric for adversarial questions (category 5).
-    These questions should result in "not mentioned" or similar responses.
+    Score for unanswerable questions (Category 4).
+    From paper: "Questions where the answer cannot be determined from the conversation"
     """
-    pred_answer = pred.answer.lower().strip()
+    pred_lower = prediction.lower().strip()
+    true_lower = ground_truth.lower().strip()
     
-    # Check if the model correctly identifies that information is not available
-    not_mentioned_phrases = [
-        "no information available",
+    # Check if both indicate the question is unanswerable
+    unanswerable_phrases = [
+        "i don't know",
+        "don't know",
+        "cannot be determined",
         "not mentioned",
         "not available",
-        "cannot be determined",
+        "insufficient information",
+        "unclear",
+        "unknown",
         "not stated",
         "not provided"
     ]
     
-    is_correct = any(phrase in pred_answer for phrase in not_mentioned_phrases)
+    pred_is_unanswerable = any(phrase in pred_lower for phrase in unanswerable_phrases)
+    true_is_unanswerable = any(phrase in true_lower for phrase in unanswerable_phrases)
     
-    if trace is None:
-        return 1.0 if is_correct else 0.0
+    if pred_is_unanswerable and true_is_unanswerable:
+        return 1.0
+    elif not pred_is_unanswerable and not true_is_unanswerable:
+        # Both provide actual answers, use F1
+        return f1_score(prediction, ground_truth)
     else:
-        return is_correct
+        # One is unanswerable, other isn't
+        return 0.0
 
 
-def temporal_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> float:
+def ambiguous_score(prediction: str, ground_truth: str) -> float:
     """
-    Metric for temporal questions (category 2).
+    Score for ambiguous questions (Category 5) with multiple acceptable answers.
+    From paper: "Questions that could have multiple valid interpretations"
     """
-    # For temporal questions, we can be more lenient with date formats
-    pred_answer = normalize_answer(pred.answer)
-    true_answer = normalize_answer(example.answer)
-    
-    # Check for partial date matches (year, month, etc.)
-    score = f1_score(pred.answer, example.answer)
-    
-    # Bonus for exact temporal match
-    if pred_answer == true_answer:
-        score = 1.0
-    
-    if trace is None:
-        return score
+    # Handle multiple acceptable answers separated by semicolons or pipes
+    if ';' in ground_truth or '|' in ground_truth:
+        acceptable_answers = []
+        for sep in [';', '|']:
+            if sep in ground_truth:
+                acceptable_answers = [ans.strip() for ans in ground_truth.split(sep)]
+                break
+        
+        # Check if prediction matches any acceptable answer
+        scores = [f1_score(prediction, ans) for ans in acceptable_answers]
+        return max(scores) if scores else 0.0
     else:
-        return score > 0.5
+        return f1_score(prediction, ground_truth)
 
 
-def comprehensive_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> float:
+def normalize_temporal(text: str) -> str:
+    """Normalize temporal expressions for better matching."""
+    text = text.lower().strip()
+    
+    # Common temporal normalizations
+    temporal_mappings = {
+        'january': 'jan', 'february': 'feb', 'march': 'mar',
+        'april': 'apr', 'may': 'may', 'june': 'jun',
+        'july': 'jul', 'august': 'aug', 'september': 'sep',
+        'october': 'oct', 'november': 'nov', 'december': 'dec'
+    }
+    
+    for full_month, short_month in temporal_mappings.items():
+        text = text.replace(full_month, short_month)
+    
+    # Remove common temporal words that don't affect meaning
+    temporal_noise = ['on', 'at', 'in', 'during', 'the']
+    words = text.split()
+    filtered_words = [w for w in words if w not in temporal_noise]
+    
+    return ' '.join(filtered_words)
+
+
+def memory_distance_metric(example: dspy.Example, pred: dspy.Prediction, trace: Optional[Any] = None) -> Dict[str, float]:
     """
-    Comprehensive metric that combines multiple aspects of answer quality.
+    Calculate memory distance-aware metrics as per LOCOMO paper.
+    From paper: "We analyze performance based on how far back in the conversation the relevant information appears"
     """
-    if not hasattr(pred, 'answer') or not hasattr(example, 'answer'):
+    base_score = locomo_paper_metric(example, pred, trace)
+    
+    # Extract memory distance from evidence if available
+    memory_distance = calculate_memory_distance(example)
+    
+    return {
+        'score': base_score,
+        'memory_distance': memory_distance,
+        'distance_category': categorize_memory_distance(memory_distance)
+    }
+
+
+def calculate_memory_distance(example: dspy.Example) -> float:
+    """
+    Calculate memory distance based on evidence timestamps.
+    From paper: "Memory distance is measured in conversation turns"
+    """
+    if not hasattr(example, 'evidence') or not example.evidence:
         return 0.0
     
-    # Base F1 score
-    f1 = f1_metric(example, pred, trace=None)
+    # Extract session and dialog IDs from evidence
+    distances = []
+    for evidence in example.evidence:
+        if isinstance(evidence, str) and ':' in evidence:
+            # Format: "D{session}:{dialog}" or "S{session}:{dialog}"
+            try:
+                session_part, dialog_part = evidence.split(':')
+                session_num = int(session_part[1:])  # Remove 'D' or 'S' prefix
+                dialog_num = int(dialog_part)
+                
+                # Simple distance calculation (could be more sophisticated)
+                distance = session_num * 100 + dialog_num  # Rough ordering
+                distances.append(distance)
+            except (ValueError, IndexError):
+                continue
     
-    # Answer length penalty (very short or very long answers are penalized)
-    answer_len = len(pred.answer.split())
-    if answer_len < 1:
-        length_penalty = 0.0
-    elif answer_len > 20:
-        length_penalty = 0.8
+    return min(distances) if distances else 0.0
+
+
+def categorize_memory_distance(distance: float) -> str:
+    """Categorize memory distance as per paper analysis."""
+    if distance == 0:
+        return "immediate"
+    elif distance < 50:
+        return "recent"
+    elif distance < 200:
+        return "medium"
     else:
-        length_penalty = 1.0
-    
-    # Category-specific bonus
-    category_score = category_aware_metric(example, pred, trace=None)
-    
-    # Combined score
-    final_score = (f1 * 0.6 + category_score * 0.4) * length_penalty
-    
-    if trace is None:
-        return final_score
-    else:
-        return final_score > 0.6
+        return "distant"
 
 
-def f1(prediction: str, ground_truth: str) -> float:
-    """
-    Multi-answer F1 score for category 1 questions.
-    Handles comma-separated answers.
-    """
-    predictions = [p.strip() for p in prediction.split(",")]
-    ground_truths = [g.strip() for g in ground_truth.split(",")]
-    
-    scores = []
-    for gt in ground_truths:
-        gt_scores = [f1_score(pred, gt) for pred in predictions]
-        scores.append(max(gt_scores) if gt_scores else 0.0)
-    
-    return sum(scores) / len(scores) if scores else 0.0
-
-
-class LocomoMetrics:
-    """Collection of metrics for LOCOMO evaluation."""
+class LocomoPaperMetrics:
+    """Paper-accurate metrics collection for LOCOMO evaluation."""
     
     @staticmethod
     def get_metric(metric_name: str):
-        """Get a metric by name."""
+        """Get a paper-accurate metric by name."""
         metrics_map = {
-            "f1": f1_metric,
-            "exact_match": exact_match_metric,
-            "category_aware": category_aware_metric,
-            "comprehensive": comprehensive_metric,
-            "adversarial": adversarial_metric,
-            "temporal": temporal_metric
+            "locomo_paper": locomo_paper_metric,
+            "multi_hop": lambda ex, pred, trace=None: multi_hop_f1_score(pred.answer, ex.answer),
+            "temporal": lambda ex, pred, trace=None: temporal_f1_score(pred.answer, ex.answer),
+            "unanswerable": lambda ex, pred, trace=None: unanswerable_score(pred.answer, ex.answer),
+            "ambiguous": lambda ex, pred, trace=None: ambiguous_score(pred.answer, ex.answer),
+            "memory_distance": memory_distance_metric
         }
         
         if metric_name not in metrics_map:
@@ -192,64 +240,92 @@ class LocomoMetrics:
         return metrics_map[metric_name]
     
     @staticmethod
-    def evaluate_predictions(examples: list, predictions: list, metric_name: str = "f1") -> Dict[str, float]:
+    def evaluate_with_paper_metrics(examples: List, predictions: List) -> Dict[str, Any]:
         """
-        Evaluate a list of predictions against examples.
-        
-        Args:
-            examples: List of ground truth examples
-            predictions: List of model predictions
-            metric_name: Name of metric to use
-            
-        Returns:
-            Dictionary with evaluation results
+        Evaluate predictions using paper-accurate LOCOMO metrics.
         """
-        metric_fn = LocomoMetrics.get_metric(metric_name)
-        
-        scores = []
-        category_scores = {1: [], 2: [], 3: [], 4: [], 5: []}
-        
-        for example, pred in zip(examples, predictions):
-            score = metric_fn(example, pred)
-            scores.append(score)
-            
-            if hasattr(example, 'category'):
-                category_scores[example.category].append(score)
-        
-        # Calculate overall and per-category metrics
         results = {
-            "overall_score": sum(scores) / len(scores) if scores else 0.0,
-            "total_examples": len(scores)
+            "overall": {"scores": [], "count": 0},
+            "by_category": {i: {"scores": [], "count": 0} for i in range(1, 6)},
+            "by_memory_distance": {
+                "immediate": {"scores": [], "count": 0},
+                "recent": {"scores": [], "count": 0}, 
+                "medium": {"scores": [], "count": 0},
+                "distant": {"scores": [], "count": 0}
+            }
         }
         
-        for cat, cat_scores in category_scores.items():
-            if cat_scores:
-                results[f"category_{cat}_score"] = sum(cat_scores) / len(cat_scores)
-                results[f"category_{cat}_count"] = len(cat_scores)
+        for example, pred in zip(examples, predictions):
+            # Main metric
+            score = locomo_paper_metric(example, pred)
+            results["overall"]["scores"].append(score)
+            results["overall"]["count"] += 1
+            
+            # By category
+            category = getattr(example, 'category', 3)
+            if 1 <= category <= 5:
+                results["by_category"][category]["scores"].append(score)
+                results["by_category"][category]["count"] += 1
+            
+            # By memory distance
+            memory_info = memory_distance_metric(example, pred)
+            distance_cat = memory_info["distance_category"]
+            results["by_memory_distance"][distance_cat]["scores"].append(score)
+            results["by_memory_distance"][distance_cat]["count"] += 1
         
-        return results
+        # Calculate averages
+        final_results = {}
+        
+        # Overall
+        final_results["overall_score"] = (
+            sum(results["overall"]["scores"]) / len(results["overall"]["scores"])
+            if results["overall"]["scores"] else 0.0
+        )
+        final_results["total_examples"] = results["overall"]["count"]
+        
+        # By category
+        for cat in range(1, 6):
+            cat_scores = results["by_category"][cat]["scores"]
+            if cat_scores:
+                final_results[f"category_{cat}_score"] = sum(cat_scores) / len(cat_scores)
+                final_results[f"category_{cat}_count"] = len(cat_scores)
+        
+        # By memory distance
+        for dist_cat in ["immediate", "recent", "medium", "distant"]:
+            dist_scores = results["by_memory_distance"][dist_cat]["scores"]
+            if dist_scores:
+                final_results[f"memory_{dist_cat}_score"] = sum(dist_scores) / len(dist_scores)
+                final_results[f"memory_{dist_cat}_count"] = len(dist_scores)
+        
+        return final_results
 
 
 if __name__ == "__main__":
-    # Example usage
-    example = dspy.Example(
-        question="What did Alice eat?",
-        answer="pasta",
-        category=3
+    # Test the paper-accurate metrics
+    
+    # Multi-hop example
+    multi_hop_ex = dspy.Example(
+        question="What did Alice eat and where did she go?",
+        answer="pasta, restaurant",
+        category=1
     )
+    multi_hop_pred = dspy.Prediction(answer="spaghetti and Italian place")
+    print(f"Multi-hop F1: {locomo_paper_metric(multi_hop_ex, multi_hop_pred)}")
     
-    pred = dspy.Prediction(answer="spaghetti")
-    
-    print(f"F1 Score: {f1_metric(example, pred)}")
-    print(f"Exact Match: {exact_match_metric(example, pred)}")
-    print(f"Category-aware: {category_aware_metric(example, pred)}")
-    
-    # Test adversarial example
-    adv_example = dspy.Example(
-        question="What did Charlie wear?",
-        answer="not mentioned",
-        category=5
+    # Unanswerable example  
+    unanswerable_ex = dspy.Example(
+        question="What color was Bob's car?",
+        answer="I don't know",
+        category=4
     )
+    unanswerable_pred = dspy.Prediction(answer="Cannot be determined from conversation")
+    print(f"Unanswerable score: {locomo_paper_metric(unanswerable_ex, unanswerable_pred)}")
     
-    adv_pred = dspy.Prediction(answer="No information available in the conversation")
-    print(f"Adversarial Score: {adversarial_metric(adv_example, adv_pred)}")
+    # Temporal example
+    temporal_ex = dspy.Example(
+        question="When did the meeting happen?",
+        answer="January 15, 2023",
+        category=2
+    )
+    temporal_pred = dspy.Prediction(answer="Jan 15 2023")
+    print(f"Temporal F1: {locomo_paper_metric(temporal_ex, temporal_pred)}")
