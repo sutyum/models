@@ -4,6 +4,9 @@ import json
 import time
 import sys
 import os
+import asyncio
+import concurrent.futures
+from typing import Optional
 
 from google import genai
 from google.genai import types
@@ -154,6 +157,53 @@ def run_gemini(client, content: str, model_name: str = "gemini-2.0-flash", max_t
                     continue
             print(f"{type(e).__name__}: {e}")
             return None
+
+
+# Global thread pool executor for async operations
+_executor = None
+
+def get_executor():
+    global _executor
+    if _executor is None:
+        _executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+    return _executor
+
+
+async def run_gemini_async(client, content: str, model_name: str = "gemini-2.0-flash", max_tokens: int = 0) -> Optional[str]:
+    """Async wrapper for run_gemini using thread pool executor"""
+    loop = asyncio.get_event_loop()
+    executor = get_executor()
+    
+    # Run the synchronous function in a thread pool
+    return await loop.run_in_executor(
+        executor,
+        run_gemini,
+        client,
+        content,
+        model_name,
+        max_tokens
+    )
+
+
+class RateLimiter:
+    """Simple rate limiter using asyncio.Semaphore for concurrent requests"""
+    def __init__(self, max_concurrent: int = 5, delay_between_calls: float = 0.5):
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.delay = delay_between_calls
+        self.last_call = 0
+    
+    async def __aenter__(self):
+        await self.semaphore.acquire()
+        # Ensure minimum delay between calls
+        current_time = time.time()
+        time_since_last = current_time - self.last_call
+        if time_since_last < self.delay:
+            await asyncio.sleep(self.delay - time_since_last)
+        self.last_call = time.time()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.semaphore.release()
 
 
 def run_chatgpt(

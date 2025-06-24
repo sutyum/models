@@ -7,7 +7,9 @@ import random
 import os, json
 from tqdm import tqdm
 import time
-from locomo.utils import run_gemini
+import asyncio
+from typing import Dict, List, Optional
+from locomo.utils import run_gemini, run_gemini_async, RateLimiter
 from google.genai import types
 
 
@@ -184,21 +186,23 @@ def get_gemini_answers(client, in_data, out_data, prediction_key, args):
                 question = (
                     qa["question"] + " Select the correct answer: (a) {} (b) {}. "
                 )
+                # Get the adversarial answer for category 5
+                adversarial_answer = qa.get("adversarial_answer", qa.get("answer", ""))
                 if random.random() < 0.5:
                     question = question.format(
-                        "Not mentioned in the conversation", qa["answer"]
+                        "Not mentioned in the conversation", adversarial_answer
                     )
                     answer = {
                         "a": "Not mentioned in the conversation",
-                        "b": qa["answer"],
+                        "b": adversarial_answer,
                     }
                 else:
                     question = question.format(
-                        qa["answer"], "Not mentioned in the conversation"
+                        adversarial_answer, "Not mentioned in the conversation"
                     )
                     answer = {
                         "b": "Not mentioned in the conversation",
-                        "a": qa["answer"],
+                        "a": adversarial_answer,
                     }
 
                 cat_5_idxs.append(len(questions))
@@ -331,3 +335,141 @@ def get_gemini_answers(client, in_data, out_data, prediction_key, args):
                             )[0]
 
     return out_data
+
+
+async def get_gemini_answers_async(
+    client, 
+    in_data: Dict, 
+    out_data: Dict, 
+    prediction_key: str, 
+    args,
+    rate_limiter: Optional[RateLimiter] = None,
+    progress_callback=None
+) -> Dict:
+    """Async version of get_gemini_answers that processes QA items concurrently"""
+    
+    assert len(in_data["qa"]) == len(out_data["qa"]), (
+        len(in_data["qa"]),
+        len(out_data["qa"]),
+    )
+    
+    # Use default rate limiter if none provided
+    if rate_limiter is None:
+        rate_limiter = RateLimiter(max_concurrent=5, delay_between_calls=0.5)
+    
+    # Start instruction prompt
+    speakers_names = list(
+        set([d["speaker"] for d in in_data["conversation"]["session_1"]])
+    )
+    start_prompt = CONV_START_PROMPT.format(speakers_names[0], speakers_names[1])
+    start_tokens = 100
+    
+    # Get conversation context once (it's the same for all questions)
+    question_prompt = QA_PROMPT_BATCH + "\n".join(["Placeholder"])
+    num_question_tokens = 200
+    query_conv = get_input_context(
+        in_data["conversation"], num_question_tokens + start_tokens, client, args
+    )
+    query_conv = start_prompt + query_conv
+    
+    # Process batches if batch_size > 1, otherwise process individually
+    if args.batch_size == 1:
+        # Process individual QA items concurrently
+        qa_tasks = []
+        
+        for i, qa in enumerate(in_data["qa"]):
+            # Skip if already processed and not overwriting
+            if prediction_key in out_data["qa"][i] and not args.overwrite:
+                if progress_callback:
+                    progress_callback(1)
+                continue
+            
+            # Create task for this QA item
+            task = process_single_qa_async(
+                client, qa, i, query_conv, prediction_key, args, rate_limiter
+            )
+            qa_tasks.append((i, task))
+        
+        # Process all QA items concurrently
+        if qa_tasks:
+            results = await asyncio.gather(
+                *[task for _, task in qa_tasks],
+                return_exceptions=True
+            )
+            
+            # Update out_data with results
+            for (idx, _), result in zip(qa_tasks, results):
+                if isinstance(result, Exception):
+                    print(f"Error processing QA {idx}: {result}")
+                    out_data["qa"][idx][prediction_key] = ""
+                else:
+                    out_data["qa"][idx][prediction_key] = result
+                
+                if progress_callback:
+                    progress_callback(1)
+    else:
+        # Use synchronous batch processing for now
+        # (Could be made async in the future if needed)
+        return get_gemini_answers(client, in_data, out_data, prediction_key, args)
+    
+    return out_data
+
+
+async def process_single_qa_async(
+    client,
+    qa: Dict,
+    qa_index: int,
+    query_conv: str,
+    prediction_key: str,
+    args,
+    rate_limiter: RateLimiter
+) -> str:
+    """Process a single QA item asynchronously"""
+    
+    async with rate_limiter:
+        # Prepare question based on category
+        if qa["category"] == 2:
+            question = qa["question"] + " Use DATE of CONVERSATION to answer with an approximate date."
+        elif qa["category"] == 5:
+            # Handle category 5 (adversarial)
+            question = qa["question"] + " Select the correct answer: (a) {} (b) {}. "
+            # Get the adversarial answer for category 5
+            adversarial_answer = qa.get("adversarial_answer", qa.get("answer", ""))
+            if random.random() < 0.5:
+                question = question.format(
+                    "Not mentioned in the conversation", adversarial_answer
+                )
+                answer_key = {
+                    "a": "Not mentioned in the conversation",
+                    "b": adversarial_answer,
+                }
+            else:
+                question = question.format(
+                    adversarial_answer, "Not mentioned in the conversation"
+                )
+                answer_key = {
+                    "b": "Not mentioned in the conversation",
+                    "a": adversarial_answer,
+                }
+            
+            # Use category 5 specific prompt
+            query = query_conv + "\n\n" + QA_PROMPT_CAT_5.format(question)
+            answer = await run_gemini_async(client, query, args.model)
+            
+            if answer is None:
+                return ""
+            
+            return get_cat_5_answer(answer, answer_key)
+        else:
+            question = qa["question"]
+        
+        # Create query
+        query = query_conv + "\n\n" + QA_PROMPT.format(question)
+        
+        # Get answer
+        answer = await run_gemini_async(client, query, args.model)
+        
+        if answer is None:
+            return ""
+        
+        return answer.strip()
