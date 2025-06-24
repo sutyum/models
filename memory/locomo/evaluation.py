@@ -75,6 +75,8 @@ def _normalize(text):
 
 
 def normalize_answer(s):
+    # Convert to string if it's not already
+    s = str(s)
     s = s.replace(",", "")
 
     def remove_articles(text):

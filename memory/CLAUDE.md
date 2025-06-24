@@ -26,39 +26,95 @@ python main.py
 
 ### Running Evaluation
 
-#### Synchronous Evaluation
 ```bash
 # Set Google API key (required for Gemini models)
 export GOOGLE_API_KEY="your-api-key"
 
-# Using uv run with default settings
+# Basic usage (async by default with 10 concurrent requests)
 uv run python locomo/evaluate_qa.py
 
-# Using uv run with custom parameters
+# Quick testing with limited samples
+uv run python locomo/evaluate_qa.py --max-samples 20
+
+# Synchronous processing (slower but more conservative)
+uv run python locomo/evaluate_qa.py --sync
+
+# Custom async settings
+uv run python locomo/evaluate_qa.py \
+  --max-concurrent 15 \
+  --max-samples 50 \
+  --out-file ./outputs/custom_results.json
+
+# Full parameter example
 uv run python locomo/evaluate_qa.py \
   --out-file ./outputs/results.json \
   --model gemini-2.5-flash-lite-preview-06-17 \
   --data-file ./data/locomo10.json \
+  --max-samples 100 \
+  --max-concurrent 10 \
+  [--sync] \
   [--use-rag] \
   [--batch-size N] \
-  [--rag-mode <mode>] \
-  [--top-k N] \
   [--overwrite]
 ```
 
-#### Asynchronous Evaluation (Faster with Parallelization)
-```bash
-# Run async evaluation with concurrent API calls
-uv run python locomo/evaluate_qa_async.py \
-  --out-file ./outputs/results_async.json \
-  --model gemini-2.5-flash-lite-preview-06-17 \
-  --data-file ./data/locomo10.json \
-  --max-concurrent 5 \
-  --batch-size 50
+#### Performance Notes
+- **Async mode (default)**: ~5-10x faster with concurrent API calls
+- **Sync mode**: Safer for API rate limits but much slower
+- **max-concurrent**: Higher values = faster but may hit rate limits
+- **max-samples**: Limits conversation samples (dataset has 10 total)
+- **max-qa-items**: Limits total QA items across all samples (useful for testing)
 
-# Adjust max-concurrent based on your API rate limits
-# Higher values = faster processing but may hit rate limits
+### DSPy Integration
+
+The project includes a complete DSPy wrapper for using LOCOMO as a benchmark for optimizing conversational QA systems.
+
+#### Quick DSPy Evaluation
+```bash
+# Set OpenAI API key for DSPy
+export OPENAI_API_KEY="your-openai-key"
+
+# Simple evaluation with 10 examples
+uv run python locomo/dspy_evaluate.py --limit 10
+
+# Test different module types
+uv run python locomo/dspy_evaluate.py --module-type category_aware --limit 5
 ```
+
+#### DSPy Optimization with MIPRO
+```bash
+# Basic optimization (50 trials, ~100 examples)
+uv run python locomo/dspy_optimizer.py
+
+# Quick test optimization
+uv run python locomo/dspy_optimizer.py \
+  --limit-examples 50 \
+  --num-trials 20 \
+  --module-type chain_of_thought
+
+# Optimize for specific categories
+uv run python locomo/dspy_optimizer.py \
+  --categories 1 3 5 \
+  --limit-examples 100 \
+  --metric category_aware
+
+# Skip optimization, just evaluate baseline
+uv run python locomo/dspy_optimizer.py \
+  --skip-optimization \
+  --limit-examples 50
+```
+
+#### DSPy Module Types
+- **basic**: Simple prediction without reasoning
+- **chain_of_thought**: Step-by-step reasoning before answering
+- **category_aware**: Different strategies per question category
+- **multi_step**: Context extraction followed by answer generation
+
+#### DSPy Metrics
+- **f1**: F1 score with category-specific handling
+- **exact_match**: Exact string matching
+- **category_aware**: Category-specific evaluation strategies
+- **comprehensive**: Multi-aspect scoring with penalties
 
 ## Architecture Overview
 
@@ -67,9 +123,19 @@ uv run python locomo/evaluate_qa_async.py \
 1. **main.py**: Entry point that configures DSPy with Ollama (llama3.2 model) running locally on port 11434.
 
 2. **locomo/**: Main evaluation package containing:
-   - **evaluate_qa.py**: Main evaluation script for question-answering tasks. Handles model initialization, data loading, and evaluation orchestration.
-   - **evaluate_qa_async.py**: Asynchronous version that processes multiple QA items concurrently for faster evaluation.
-   - **evaluation.py**: Core evaluation metrics implementation including:
+   - **evaluate_qa.py**: Unified evaluation script supporting both sync/async processing:
+     - Async mode (default): Concurrent API calls for faster evaluation
+     - Sync mode: Sequential processing for conservative rate limiting
+     - Configurable sample limits for testing
+   - **utils.py**: Core utilities for API interactions:
+     - `run_gemini`: Synchronous Gemini API calls with rate limiting
+     - `run_gemini_async`: Thread-pool based async wrapper
+     - `RateLimiter`: Semaphore-based concurrent request control
+   - **gemini_utils.py**: Gemini-specific evaluation logic:
+     - `get_gemini_answers`: Synchronous QA processing
+     - `get_gemini_answers_async`: Concurrent QA processing
+     - Category-specific prompt handling and answer extraction
+   - **evaluation.py**: Core evaluation metrics implementation:
      - F1 score calculation with stemming
      - Exact match scoring
      - BERT score integration
@@ -79,11 +145,12 @@ uv run python locomo/evaluate_qa_async.py \
      - Question category (1-5)
      - Memory/context length requirements
      - Recall accuracy for RAG-based approaches
-   - **async_utils.py**: Asynchronous utilities for parallel API calls:
-     - `run_gemini_async`: Thread-pool based async wrapper for Gemini API calls
-     - `RateLimiter`: Semaphore-based rate limiting for concurrent requests
-     - `evaluate_model_async`: Main async evaluation orchestrator
-   - **gemini_utils_async.py**: Async version of gemini_utils with concurrent QA processing
+   - **DSPy Integration**:
+     - **dspy_dataset.py**: Converts LOCOMO data to DSPy Examples with conversation formatting
+     - **dspy_modules.py**: DSPy signatures and modules for conversational QA
+     - **dspy_metrics.py**: Category-aware metrics for DSPy evaluation and optimization
+     - **dspy_optimizer.py**: MIPRO optimization pipeline for systematic prompt improvement
+     - **dspy_evaluate.py**: Simple evaluation script for testing DSPy modules
 
 ### Data Flow
 
@@ -103,7 +170,8 @@ uv run python locomo/evaluate_qa_async.py \
 ### Key Dependencies
 
 - **google-genai**: Google's Generative AI SDK for Gemini models
-- **dspy**: LLM framework for model interactions
+- **dspy**: LLM framework for model interactions (original main.py)
+- **dspy-ai**: Advanced DSPy framework for prompt optimization and evaluation
 - **bert-score**: For semantic similarity evaluation
 - **nltk**: For text processing and stemming
 - **numpy**: Numerical computations

@@ -31,15 +31,42 @@ def parse_args():
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--retriever", type=str, default="contriever")
     parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--async", action="store_true", 
-                       help="Use async processing for parallel API calls")
-    parser.add_argument("--max-concurrent", type=int, default=5,
-                       help="Maximum concurrent API calls (only for async mode)")
+    parser.add_argument(
+        "--is_async",
+        action="store_true",
+        default=True,
+        help="Use async processing for parallel API calls (default: True)",
+    )
+    parser.add_argument(
+        "--is_sync",
+        action="store_true",
+        help="Force synchronous processing (overrides --is_async)",
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=10,
+        help="Maximum concurrent API calls (only for async mode, default: 10)",
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Limit the number of samples to process (useful for testing, default: process all)",
+    )
+    parser.add_argument(
+        "--max-qa-items",
+        type=int,
+        default=None,
+        help="Limit the total number of QA items to process across all samples (useful for testing)",
+    )
     args = parser.parse_args()
     return args
 
 
-def process_and_save_results(samples, out_samples, args, gemini_model, prediction_key, model_key):
+def process_and_save_results(
+    samples, out_samples, args, gemini_model, prediction_key, model_key
+):
     """Common processing logic for both sync and async versions"""
     for data in tqdm(samples, desc="Processing samples"):
         out_data = {"sample_id": data["sample_id"]}
@@ -49,6 +76,10 @@ def process_and_save_results(samples, out_samples, args, gemini_model, predictio
             out_data["qa"] = data["qa"].copy()
 
         if "gemini" in args.model:
+            # Ensure out_data has the same QA items as in_data (in case of max-qa-items limiting)
+            if len(out_data["qa"]) != len(data["qa"]):
+                out_data["qa"] = data["qa"].copy()
+            
             # get answers for each sample
             answers = get_gemini_answers(
                 gemini_model, data, out_data, prediction_key, args
@@ -70,17 +101,21 @@ def process_and_save_results(samples, out_samples, args, gemini_model, predictio
     return out_samples
 
 
-async def process_and_save_results_async(samples, out_samples, args, gemini_model, prediction_key, model_key):
+async def process_and_save_results_async(
+    samples, out_samples, args, gemini_model, prediction_key, model_key
+):
     """Async version of processing logic"""
-    rate_limiter = RateLimiter(max_concurrent=args.max_concurrent, delay_between_calls=0.5)
-    
+    rate_limiter = RateLimiter(
+        max_concurrent=args.max_concurrent, delay_between_calls=0.5
+    )
+
     # Calculate total QA items for progress tracking
     total_qa = sum(len(sample["qa"]) for sample in samples)
     pbar = tqdm(total=total_qa, desc="Processing QA items (async)")
-    
+
     def update_progress(n=1):
         pbar.update(n)
-    
+
     for data in samples:
         out_data = {"sample_id": data["sample_id"]}
         if data["sample_id"] in out_samples:
@@ -89,10 +124,19 @@ async def process_and_save_results_async(samples, out_samples, args, gemini_mode
             out_data["qa"] = data["qa"].copy()
 
         if "gemini" in args.model:
+            # Ensure out_data has the same QA items as in_data (in case of max-qa-items limiting)
+            if len(out_data["qa"]) != len(data["qa"]):
+                out_data["qa"] = data["qa"].copy()
+            
             # get answers for each sample
             answers = await get_gemini_answers_async(
-                gemini_model, data, out_data, prediction_key, args, 
-                rate_limiter, progress_callback=update_progress
+                gemini_model,
+                data,
+                out_data,
+                prediction_key,
+                args,
+                rate_limiter,
+                progress_callback=update_progress,
             )
         else:
             raise NotImplementedError
@@ -107,7 +151,7 @@ async def process_and_save_results_async(samples, out_samples, args, gemini_mode
                 answers["qa"][i][model_key + "_recall"] = round(recall[i], 3)
 
         out_samples[data["sample_id"]] = answers
-    
+
     pbar.close()
     return out_samples
 
@@ -115,10 +159,10 @@ async def process_and_save_results_async(samples, out_samples, args, gemini_mode
 async def main_async():
     """Async version of main function"""
     args = parse_args()
-    
+
     print(f"******************  Evaluating Model {args.model} (Async) ***************")
     print(f"Max concurrent requests: {args.max_concurrent}")
-    
+
     if "gemini" in args.model:
         # Initialize Gemini API
         api_key = os.environ.get("GOOGLE_API_KEY")
@@ -130,6 +174,29 @@ async def main_async():
 
     # load conversations
     samples = json.load(open(args.data_file))
+
+    # Limit samples if max-samples is specified
+    if args.max_samples is not None:
+        samples = samples[: args.max_samples]
+        print(f"Limited to {len(samples)} samples for testing")
+    
+    # Limit QA items if max-qa-items is specified
+    if args.max_qa_items is not None:
+        total_qa = 0
+        for sample in samples:
+            if total_qa >= args.max_qa_items:
+                sample["qa"] = []
+            elif total_qa + len(sample["qa"]) > args.max_qa_items:
+                remaining = args.max_qa_items - total_qa
+                sample["qa"] = sample["qa"][:remaining]
+                total_qa = args.max_qa_items
+            else:
+                total_qa += len(sample["qa"])
+        
+        # Remove samples with no QA items
+        samples = [s for s in samples if len(s["qa"]) > 0]
+        total_qa_actual = sum(len(s["qa"]) for s in samples)
+        print(f"Limited to {total_qa_actual} QA items across {len(samples)} samples for testing")
     prediction_key = (
         "%s_prediction" % args.model
         if not args.use_rag
@@ -140,7 +207,7 @@ async def main_async():
         if not args.use_rag
         else "%s_%s_top_%s" % (args.model, args.rag_mode, args.top_k)
     )
-    
+
     # load the output file if it exists to check for overwriting
     if os.path.exists(args.out_file):
         out_samples = {d["sample_id"]: d for d in json.load(open(args.out_file))}
@@ -170,14 +237,18 @@ async def main_async():
 def main():
     """Main function that routes to sync or async version"""
     args = parse_args()
-    
-    if args.async:
+
+    # Handle sync override
+    if args.is_sync:
+        args.is_async = False
+
+    if args.is_async:
         # Run async version
         asyncio.run(main_async())
         return
-    
+
     print(f"******************  Evaluating Model {args.model} ***************")
-    
+
     if "gemini" in args.model:
         # Initialize Gemini API
         api_key = os.environ.get("GOOGLE_API_KEY")
@@ -189,6 +260,29 @@ def main():
 
     # load conversations
     samples = json.load(open(args.data_file))
+
+    # Limit samples if max-samples is specified
+    if args.max_samples is not None:
+        samples = samples[: args.max_samples]
+        print(f"Limited to {len(samples)} samples for testing")
+    
+    # Limit QA items if max-qa-items is specified
+    if args.max_qa_items is not None:
+        total_qa = 0
+        for sample in samples:
+            if total_qa >= args.max_qa_items:
+                sample["qa"] = []
+            elif total_qa + len(sample["qa"]) > args.max_qa_items:
+                remaining = args.max_qa_items - total_qa
+                sample["qa"] = sample["qa"][:remaining]
+                total_qa = args.max_qa_items
+            else:
+                total_qa += len(sample["qa"])
+        
+        # Remove samples with no QA items
+        samples = [s for s in samples if len(s["qa"]) > 0]
+        total_qa_actual = sum(len(s["qa"]) for s in samples)
+        print(f"Limited to {total_qa_actual} QA items across {len(samples)} samples for testing")
     prediction_key = (
         "%s_prediction" % args.model
         if not args.use_rag
@@ -199,7 +293,7 @@ def main():
         if not args.use_rag
         else "%s_%s_top_%s" % (args.model, args.rag_mode, args.top_k)
     )
-    
+
     # load the output file if it exists to check for overwriting
     if os.path.exists(args.out_file):
         out_samples = {d["sample_id"]: d for d in json.load(open(args.out_file))}
