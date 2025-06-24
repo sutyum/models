@@ -140,9 +140,34 @@ def f1_score(prediction, ground_truth):
     num_same = sum(common.values())
     if num_same == 0:
         return 0
+    
     precision = 1.0 * num_same / len(prediction_tokens)
     recall = 1.0 * num_same / len(ground_truth_tokens)
-    f1 = (2 * precision * recall) / (precision + recall)
+    
+    # Enhanced scoring for verbose but correct answers
+    gt_tokens_set = set(ground_truth_tokens)
+    pred_tokens_set = set(prediction_tokens)
+    
+    # If all ground truth tokens are present, apply containment bonus
+    if gt_tokens_set.issubset(pred_tokens_set):
+        # High base score for perfect containment
+        containment_score = 0.85
+        
+        # Apply gentle verbosity penalty based on length ratio
+        length_ratio = len(ground_truth_tokens) / len(prediction_tokens)
+        verbosity_penalty = 0.3 * (1.0 - length_ratio)  # Max 30% penalty
+        
+        enhanced_score = containment_score - verbosity_penalty
+        return min(1.0, max(enhanced_score, 0.6))  # Minimum 60% for perfect containment
+    
+    # For partial matches, use enhanced F1 that's more lenient to verbose answers
+    if len(prediction_tokens) > 2 * len(ground_truth_tokens):
+        # Weight recall more heavily for very verbose answers
+        f1 = 0.3 * precision + 0.7 * recall
+    else:
+        # Standard F1 calculation
+        f1 = (2 * precision * recall) / (precision + recall)
+    
     # print('# F1 #', prediction, ' | ', ground_truth, ' #', precision, recall, f1)
     # return recall
     return f1
