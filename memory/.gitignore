@@ -1,2 +1,7 @@
 .DS_Store
 outputs
+*.sqlite
+mlartifacts/
+sota_*/
+*.pkl
+optimized_sota_memory/
