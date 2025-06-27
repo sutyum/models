@@ -10,10 +10,8 @@ import hashlib
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
-import numpy as np
 import pickle
 from pathlib import Path
-from together import Together
 
 
 # Optional MLflow integration
@@ -516,37 +514,97 @@ class SOTAMemorySystem(dspy.Module):
         similar_memories.sort(key=lambda x: x['overlap_score'], reverse=True)
         return similar_memories[:top_k]
 
+    def _react_memory_search(self, question: str, question_category: str) -> tuple[List[Dict], List[Dict]]:
+        """Use ReACT to iteratively search through memories."""
+        all_memories_summary = self._generate_memory_summary()
+        found_memories = []
+        search_history = []
+        previous_thoughts = ""
+        
+        # Maximum 3 iterations of ReACT search
+        for iteration in range(1, 4):
+            try:
+                search_result = self.memory_searcher(
+                    question=question,
+                    all_memories_summary=all_memories_summary,
+                    question_category=question_category,
+                    search_iteration=iteration,
+                    previous_thoughts=previous_thoughts
+                )
+                
+                # Record the thought and action
+                search_history.append({
+                    "iteration": iteration,
+                    "thought": search_result.thought,
+                    "action": search_result.action
+                })
+                
+                # Execute the search action
+                if search_result.action != "DONE":
+                    try:
+                        criteria = json.loads(search_result.search_criteria)
+                        matching_memories = self._search_memories_by_criteria(criteria)
+                        
+                        # Add found memories to results
+                        for mem in matching_memories:
+                            memory_dict = {
+                                "id": mem.id,
+                                "content": mem.content,
+                                "speaker": mem.speaker,
+                                "timestamp": mem.timestamp,
+                                "memory_type": mem.memory_type,
+                                "importance_score": mem.importance_score,
+                                "keywords": mem.keywords
+                            }
+                            if memory_dict not in found_memories:
+                                found_memories.append(memory_dict)
+                    except:
+                        pass
+                
+                # Update previous thoughts
+                previous_thoughts += f"\nIteration {iteration}: {search_result.thought}\nAction: {search_result.action}"
+                
+                # Check if we should continue
+                if search_result.continue_search == "NO" or search_result.action == "DONE":
+                    break
+                    
+            except Exception as e:
+                print(f"Error in ReACT search iteration {iteration}: {e}")
+                break
+        
+        return found_memories, search_history
+
     def answer_question(
         self, question: str, question_category: str = "single-hop"
     ) -> Dict[str, Any]:
-        """Answer a question using retrieved memories."""
+        """Answer a question using ReACT memory search."""
 
-        # Retrieve relevant memories
-        candidate_memories = self._retrieve_candidate_memories(question)
+        # Use ReACT to find relevant memories
+        found_memories, search_history = self._react_memory_search(question, question_category)
 
         # Log question answering metrics to MLflow if available
         if MLFLOW_AVAILABLE:
             try:
-                mlflow.log_metric(
-                    "qa_candidate_memories_count", len(candidate_memories)
-                )
+                mlflow.log_metric("qa_candidate_memories_count", len(found_memories))
                 mlflow.log_param("qa_question_category", question_category)
+                mlflow.log_param("qa_search_iterations", len(search_history))
             except Exception:
                 pass  # Fail silently if MLflow not properly configured
 
         try:
-            # Use DSPy module to select most relevant memories
-            retrieval_result = self.memory_retriever(
+            # Use ranking module to select most relevant memories
+            ranking_result = self.memory_ranker(
                 question=question,
-                candidate_memories=json.dumps(candidate_memories),
-                question_category=question_category,
+                found_memories=json.dumps(found_memories),
+                search_history=json.dumps(search_history),
+                question_category=question_category
             )
 
             # Parse relevant memories
             try:
-                relevant_memories = json.loads(retrieval_result.relevant_memories)
+                relevant_memories = json.loads(ranking_result.relevant_memories)
             except json.JSONDecodeError:
-                relevant_memories = candidate_memories[:3]  # Fallback
+                relevant_memories = found_memories[:3]  # Fallback
 
             # Generate answer using DSPy module
             qa_result = self.qa_generator(
@@ -570,7 +628,8 @@ class SOTAMemorySystem(dspy.Module):
                 "reasoning": qa_result.reasoning,
                 "confidence": qa_result.confidence,
                 "relevant_memories": relevant_memories,
-                "retrieval_reasoning": retrieval_result.reasoning,
+                "retrieval_reasoning": ranking_result.reasoning,
+                "search_history": search_history,
             }
 
         except Exception as e:
@@ -581,38 +640,9 @@ class SOTAMemorySystem(dspy.Module):
                 "confidence": "low",
                 "relevant_memories": [],
                 "retrieval_reasoning": "Error in retrieval",
+                "search_history": search_history,
             }
 
-    def _retrieve_candidate_memories(
-        self, question: str, top_k: int = 10
-    ) -> List[Dict]:
-        """Retrieve candidate memories using semantic similarity."""
-        query_embedding = self._get_embedding(question)
-        similarities = []
-
-        for memory_id, memory in self.memories.items():
-            if memory.embedding:
-                similarity = self._compute_similarity(query_embedding, memory.embedding)
-                similarities.append((similarity, memory_id, memory))
-
-        # Sort by similarity and return top-k
-        similarities.sort(key=lambda x: x[0], reverse=True)
-
-        candidate_memories = []
-        for similarity, memory_id, memory in similarities[:top_k]:
-            candidate_memories.append(
-                {
-                    "id": memory_id,
-                    "content": memory.content,
-                    "speaker": memory.speaker,
-                    "timestamp": memory.timestamp,
-                    "memory_type": memory.memory_type,
-                    "importance_score": memory.importance_score,
-                    "similarity": similarity,
-                }
-            )
-
-        return candidate_memories
 
     def evaluate_with_llm_judge(
         self, question: str, ground_truth: str, generated_answer: str
@@ -683,6 +713,7 @@ if __name__ == "__main__":
     result = system.answer_question("What does Alice enjoy doing?", "single-hop")
     print(f"Answer: {result['answer']}")
     print(f"Reasoning: {result['reasoning']}")
+    print(f"Search History: {json.dumps(result['search_history'], indent=2)}")
 
     # Evaluate with LLM judge
     evaluation = system.evaluate_with_llm_judge(

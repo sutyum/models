@@ -192,3 +192,4 @@ uv run python locomo/dspy_optimizer.py \
 - Supports both standard and RAG-enhanced evaluation modes
 - Includes rate limit handling with automatic retries for API calls
 - Uses the new Google Genai API format with types.Content and types.GenerateContentConfig
+- DO NOT GENERATE NEW FILES OR FOLDERS

@@ -30,8 +30,7 @@ import dspy
 import mlflow
 from locomo.dataset import load_locomo_dataset
 from locomo.sota_memory_system import create_sota_memory_system
-from locomo.sota_evaluate import run_sota_evaluation
-from locomo.sota_optimizer import run_sota_optimization
+from locomo.evaluate import run_sota_evaluation
 
 
 def setup_environment():
