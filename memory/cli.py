@@ -68,9 +68,22 @@ def run_demo(limit: int = 20):
     print("🏗️  Creating memory system...")
     memory_system = create_memory_system()
     
-    # For demo, skip memory building to avoid getting stuck
-    print("💾 Skipping memory building for demo (using direct QA)...")
-    print(f"🧠 Memory store ready (starting empty for demo)")
+    # For demo, build memories from first conversation to get realistic results
+    print("💾 Building memories from first conversation...")
+    if examples:
+        sample_id = examples[0].sample_id
+        for sample in dataset.raw_data:
+            if sample["sample_id"] == sample_id:
+                try:
+                    print(f"   Processing conversation {sample_id}...")
+                    memory_system.process_conversation(sample, sample_id)
+                    print(f"   ✓ Built {len(memory_system.memories)} memories")
+                    break
+                except Exception as e:
+                    print(f"   ⚠️  Error: {e}")
+                    break
+    
+    print(f"🧠 Memory store ready with {len(memory_system.memories)} memories")
     
     # Alternative: Build minimal memories from just first conversation
     # print("💾 Building minimal memories from first conversation...")
@@ -118,31 +131,33 @@ def run_demo(limit: int = 20):
             print(f"Prediction: {result['answer']}")
             print(f"Confidence: {result['confidence']}")
             
-            # For demo, use simple string matching instead of LLM judge to avoid getting stuck
-            print("   Evaluating answer...")
+            # Use LLM judge for accurate evaluation like Mem0 paper
+            print("   Evaluating with LLM judge...")
             
-            # Simple evaluation: check if key words from ground truth appear in prediction
-            ground_truth_words = set(example.answer.lower().split())
-            prediction_words = set(result['answer'].lower().split())
-            overlap = len(ground_truth_words.intersection(prediction_words))
-            
-            # Simple heuristic: if there's significant word overlap, consider it correct
-            is_correct = overlap > 0 and overlap >= len(ground_truth_words) * 0.3
-            
-            correct_count += int(is_correct)
-            total_count += 1
-            
-            status = "✅ CORRECT" if is_correct else "❌ WRONG"
-            reasoning = f"Word overlap: {overlap}/{len(ground_truth_words)} words"
-            print(f"Simple Judge: {status} - {reasoning}")
-            
-            # Optional: Use LLM judge (commented out to avoid getting stuck in demo)
-            # evaluation = memory_system.evaluate_with_llm_judge(
-            #     example.question, example.answer, result["answer"]
-            # )
-            # is_correct = evaluation["is_correct"] 
-            # status = "✅ CORRECT" if is_correct else "❌ WRONG"
-            # print(f"LLM Judge: {status} - {evaluation['reasoning']}")
+            try:
+                evaluation = memory_system.evaluate_with_llm_judge(
+                    example.question, example.answer, result["answer"]
+                )
+                is_correct = evaluation["is_correct"]
+                correct_count += int(is_correct)
+                total_count += 1
+                
+                status = "✅ CORRECT" if is_correct else "❌ WRONG"
+                print(f"LLM Judge: {status} - {evaluation['reasoning']}")
+                
+            except Exception as e:
+                print(f"   ⚠️  LLM judge error: {e}")
+                # Fallback to simple evaluation
+                ground_truth_words = set(example.answer.lower().split())
+                prediction_words = set(result['answer'].lower().split())
+                overlap = len(ground_truth_words.intersection(prediction_words))
+                is_correct = overlap > 0 and overlap >= len(ground_truth_words) * 0.3
+                correct_count += int(is_correct)
+                total_count += 1
+                
+                status = "✅ CORRECT" if is_correct else "❌ WRONG"
+                reasoning = f"Fallback word overlap: {overlap}/{len(ground_truth_words)} words"
+                print(f"Simple Judge: {status} - {reasoning}")
             
         except Exception as e:
             print(f"   ❌ Error generating answer: {e}")
