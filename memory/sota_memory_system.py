@@ -1,7 +1,6 @@
 """
-SOTA Memory System for LOCOMO - ReACT Implementation
-Uses ReACT (Reasoning and Acting) for iterative memory search without embeddings.
-Target: >68% performance on LOCOMO benchmark.
+SOTA Memory System for LOCOMO - DSPy Implementation
+Inspired by Mem0 paper architecture with LLM-as-Judge evaluation.
 """
 
 import dspy
@@ -13,17 +12,13 @@ from datetime import datetime
 import pickle
 from pathlib import Path
 
-# Optional MLflow integration
-try:
-    import mlflow
-    MLFLOW_AVAILABLE = True
-except ImportError:
-    MLFLOW_AVAILABLE = False
+import mlflow
 
 
 @dataclass
 class Memory:
     """Structured memory representation."""
+
     id: str
     content: str
     speaker: str
@@ -38,6 +33,7 @@ class Memory:
 
 class MemoryExtractorSignature(dspy.Signature):
     """Extract salient memories from conversation exchanges."""
+
     conversation_summary: str = dspy.InputField(
         desc="High-level summary of the conversation context and themes"
     )
@@ -58,6 +54,7 @@ class MemoryExtractorSignature(dspy.Signature):
 
 class MemoryUpdateSignature(dspy.Signature):
     """Determine update operations for extracted memories."""
+
     candidate_memory: str = dspy.InputField(desc="New memory candidate to be processed")
     similar_memories: str = dspy.InputField(
         desc="JSON list of existing similar memories from the memory store"
@@ -79,6 +76,7 @@ class ReACTMemorySearchSignature(dspy.Signature):
     ReACT-style iterative memory search without embeddings.
     Think step-by-step through memories to find relevant ones.
     """
+
     question: str = dspy.InputField(
         desc="Question that needs to be answered using conversation memories"
     )
@@ -114,9 +112,8 @@ class ReACTMemorySearchSignature(dspy.Signature):
 
 class MemoryRankingSignature(dspy.Signature):
     """Rank and filter memories found through ReACT search."""
-    question: str = dspy.InputField(
-        desc="Original question to be answered"
-    )
+
+    question: str = dspy.InputField(desc="Original question to be answered")
     found_memories: str = dspy.InputField(
         desc="JSON list of all memories found through ReACT search iterations"
     )
@@ -137,6 +134,7 @@ class MemoryRankingSignature(dspy.Signature):
 
 class MemoryBasedQASignature(dspy.Signature):
     """Generate answers using retrieved memories with temporal and contextual awareness."""
+
     question: str = dspy.InputField(
         desc="Question to be answered based on conversation memories"
     )
@@ -160,6 +158,7 @@ class MemoryBasedQASignature(dspy.Signature):
 
 class LLMJudgeSignature(dspy.Signature):
     """LLM-as-Judge evaluation following Mem0 methodology."""
+
     question: str = dspy.InputField(desc="Original question that was asked")
     ground_truth: str = dspy.InputField(desc="Gold standard answer for comparison")
     generated_answer: str = dspy.InputField(
@@ -177,13 +176,13 @@ class LLMJudgeSignature(dspy.Signature):
     )
 
 
-class SOTAMemorySystemReACT(dspy.Module):
+class SOTAMemorySystem(dspy.Module):
     """
-    State-of-the-art memory system using ReACT for LOCOMO benchmark.
-    No embeddings - uses iterative plain text search through memories.
+    State-of-the-art memory system for LOCOMO benchmark.
+    Implements Mem0-inspired architecture with DSPy optimization.
     """
 
-    def __init__(self, memory_store_path: str = "./sota_memory_store_react"):
+    def __init__(self, memory_store_path: str = "./sota_memory_store"):
         super().__init__()
 
         # DSPy modules
@@ -225,127 +224,69 @@ class SOTAMemorySystemReACT(dspy.Module):
     def _generate_memory_summary(self) -> str:
         """Generate a summary of all memories for ReACT search."""
         summary_parts = []
-        
+
         # Group memories by type
         by_type = {}
         for memory in self.memories.values():
             if memory.memory_type not in by_type:
                 by_type[memory.memory_type] = []
             by_type[memory.memory_type].append(memory)
-        
+
         # Group memories by speaker
         by_speaker = {}
         for memory in self.memories.values():
             if memory.speaker not in by_speaker:
                 by_speaker[memory.speaker] = []
             by_speaker[memory.speaker].append(memory)
-        
+
         summary_parts.append(f"Total memories: {len(self.memories)}")
         summary_parts.append(f"Memory types: {', '.join(by_type.keys())}")
         summary_parts.append(f"Speakers: {', '.join(by_speaker.keys())}")
-        
+
         # Add brief overview of each type
         for mem_type, mems in by_type.items():
             summary_parts.append(f"\n{mem_type.capitalize()} memories ({len(mems)}):")
             # Show first few examples
             for mem in mems[:3]:
                 summary_parts.append(f"  - {mem.speaker}: {mem.content[:60]}...")
-        
+
         return "\n".join(summary_parts)
 
-    def _search_memories_by_criteria(self, search_criteria: Dict[str, Any]) -> List[Memory]:
+    def _search_memories_by_criteria(
+        self, search_criteria: Dict[str, Any]
+    ) -> List[Memory]:
         """Search memories based on criteria from ReACT action."""
         results = []
-        
+
         for memory in self.memories.values():
             match = False
-            
+
             # Keyword search
-            if 'keywords' in search_criteria:
-                keywords = search_criteria['keywords']
+            if "keywords" in search_criteria:
+                keywords = search_criteria["keywords"]
                 content_lower = memory.content.lower()
                 if any(kw.lower() in content_lower for kw in keywords):
                     match = True
-                    
+
             # Speaker search
-            if 'speaker' in search_criteria:
-                if memory.speaker.lower() == search_criteria['speaker'].lower():
+            if "speaker" in search_criteria:
+                if memory.speaker.lower() == search_criteria["speaker"].lower():
                     match = True
-                    
+
             # Time search
-            if 'timeframe' in search_criteria:
-                if search_criteria['timeframe'] in memory.timestamp:
+            if "timeframe" in search_criteria:
+                if search_criteria["timeframe"] in memory.timestamp:
                     match = True
-                    
+
             # Memory type search
-            if 'memory_type' in search_criteria:
-                if memory.memory_type == search_criteria['memory_type']:
+            if "memory_type" in search_criteria:
+                if memory.memory_type == search_criteria["memory_type"]:
                     match = True
-                    
+
             if match:
                 results.append(memory)
-                
-        return results
 
-    def _react_memory_search(self, question: str, question_category: str) -> List[Dict]:
-        """Use ReACT to iteratively search through memories."""
-        all_memories_summary = self._generate_memory_summary()
-        found_memories = []
-        search_history = []
-        previous_thoughts = ""
-        
-        # Maximum 3 iterations of ReACT search
-        for iteration in range(1, 4):
-            try:
-                search_result = self.memory_searcher(
-                    question=question,
-                    all_memories_summary=all_memories_summary,
-                    question_category=question_category,
-                    search_iteration=iteration,
-                    previous_thoughts=previous_thoughts
-                )
-                
-                # Record the thought and action
-                search_history.append({
-                    "iteration": iteration,
-                    "thought": search_result.thought,
-                    "action": search_result.action
-                })
-                
-                # Execute the search action
-                if search_result.action != "DONE":
-                    try:
-                        criteria = json.loads(search_result.search_criteria)
-                        matching_memories = self._search_memories_by_criteria(criteria)
-                        
-                        # Add found memories to results
-                        for mem in matching_memories:
-                            memory_dict = {
-                                "id": mem.id,
-                                "content": mem.content,
-                                "speaker": mem.speaker,
-                                "timestamp": mem.timestamp,
-                                "memory_type": mem.memory_type,
-                                "importance_score": mem.importance_score,
-                                "keywords": mem.keywords
-                            }
-                            if memory_dict not in found_memories:
-                                found_memories.append(memory_dict)
-                    except:
-                        pass
-                
-                # Update previous thoughts
-                previous_thoughts += f"\nIteration {iteration}: {search_result.thought}\nAction: {search_result.action}"
-                
-                # Check if we should continue
-                if search_result.continue_search == "NO" or search_result.action == "DONE":
-                    break
-                    
-            except Exception as e:
-                print(f"Error in ReACT search iteration {iteration}: {e}")
-                break
-        
-        return found_memories, search_history
+        return results
 
     def process_conversation(self, conversation_data: Dict, sample_id: str):
         """Process a complete conversation and extract memories."""
@@ -526,8 +467,12 @@ class SOTAMemorySystemReACT(dspy.Module):
                 if similar_memories:
                     existing_id = similar_memories[0]["id"]
                     if existing_id in self.memories:
-                        self.memories[existing_id].content = update_result.updated_content
-                        self.memories[existing_id].updated_at = datetime.now().isoformat()
+                        self.memories[
+                            existing_id
+                        ].content = update_result.updated_content
+                        self.memories[
+                            existing_id
+                        ].updated_at = datetime.now().isoformat()
 
             elif operation == "DELETE":
                 # Delete contradicted memory
@@ -541,31 +486,100 @@ class SOTAMemorySystemReACT(dspy.Module):
         except Exception as e:
             print(f"Error in memory update: {e}")
 
-    def _find_similar_memories_plain(self, content: str) -> List[Dict]:
+    def _find_similar_memories_plain(self, content: str, top_k: int = 5) -> List[Dict]:
         """Find similar memories using plain text matching."""
         similar_memories = []
         content_lower = content.lower()
-        
+
         # Extract key terms from content
         key_terms = set(content_lower.split())
-        
+
         for memory_id, memory in self.memories.items():
             memory_terms = set(memory.content.lower().split())
-            
+
             # Calculate simple overlap score
             overlap = len(key_terms.intersection(memory_terms))
             if overlap > 3:  # Threshold for similarity
-                similar_memories.append({
-                    "id": memory_id,
-                    "content": memory.content,
-                    "overlap_score": overlap,
-                    "speaker": memory.speaker,
-                    "timestamp": memory.timestamp,
-                })
-        
+                similar_memories.append(
+                    {
+                        "id": memory_id,
+                        "content": memory.content,
+                        "overlap_score": overlap,
+                        "speaker": memory.speaker,
+                        "timestamp": memory.timestamp,
+                    }
+                )
+
         # Sort by overlap score
-        similar_memories.sort(key=lambda x: x['overlap_score'], reverse=True)
-        return similar_memories[:5]
+        similar_memories.sort(key=lambda x: x["overlap_score"], reverse=True)
+        return similar_memories[:top_k]
+
+    def _react_memory_search(
+        self, question: str, question_category: str
+    ) -> tuple[List[Dict], List[Dict]]:
+        """Use ReACT to iteratively search through memories."""
+        all_memories_summary = self._generate_memory_summary()
+        found_memories = []
+        search_history = []
+        previous_thoughts = ""
+
+        # Maximum 3 iterations of ReACT search
+        for iteration in range(1, 4):
+            try:
+                search_result = self.memory_searcher(
+                    question=question,
+                    all_memories_summary=all_memories_summary,
+                    question_category=question_category,
+                    search_iteration=iteration,
+                    previous_thoughts=previous_thoughts,
+                )
+
+                # Record the thought and action
+                search_history.append(
+                    {
+                        "iteration": iteration,
+                        "thought": search_result.thought,
+                        "action": search_result.action,
+                    }
+                )
+
+                # Execute the search action
+                if search_result.action != "DONE":
+                    try:
+                        criteria = json.loads(search_result.search_criteria)
+                        matching_memories = self._search_memories_by_criteria(criteria)
+
+                        # Add found memories to results
+                        for mem in matching_memories:
+                            memory_dict = {
+                                "id": mem.id,
+                                "content": mem.content,
+                                "speaker": mem.speaker,
+                                "timestamp": mem.timestamp,
+                                "memory_type": mem.memory_type,
+                                "importance_score": mem.importance_score,
+                                "keywords": mem.keywords,
+                            }
+                            if memory_dict not in found_memories:
+                                found_memories.append(memory_dict)
+                    except:
+                        pass
+
+                # Update previous thoughts
+                previous_thoughts += f"\nIteration {iteration}: {search_result.thought}\nAction: {search_result.action}"
+
+                # Check if we should continue
+                if (
+                    search_result.continue_search == "NO"
+                    or search_result.action == "DONE"
+                ):
+                    break
+
+            except Exception as e:
+                print(f"Error in ReACT search iteration {iteration}: {e}")
+                break
+
+        return found_memories, search_history
 
     def answer_question(
         self, question: str, question_category: str = "single-hop"
@@ -573,7 +587,9 @@ class SOTAMemorySystemReACT(dspy.Module):
         """Answer a question using ReACT memory search."""
 
         # Use ReACT to find relevant memories
-        found_memories, search_history = self._react_memory_search(question, question_category)
+        found_memories, search_history = self._react_memory_search(
+            question, question_category
+        )
 
         # Log question answering metrics to MLflow if available
         if MLFLOW_AVAILABLE:
@@ -590,7 +606,7 @@ class SOTAMemorySystemReACT(dspy.Module):
                 question=question,
                 found_memories=json.dumps(found_memories),
                 search_history=json.dumps(search_history),
-                question_category=question_category
+                question_category=question_category,
             )
 
             # Parse relevant memories
@@ -609,7 +625,9 @@ class SOTAMemorySystemReACT(dspy.Module):
             # Log answer generation metrics to MLflow if available
             if MLFLOW_AVAILABLE:
                 try:
-                    mlflow.log_metric("qa_relevant_memories_count", len(relevant_memories))
+                    mlflow.log_metric(
+                        "qa_relevant_memories_count", len(relevant_memories)
+                    )
                     mlflow.log_param("qa_confidence", qa_result.confidence)
                 except Exception:
                     pass  # Fail silently if MLflow not properly configured
@@ -673,9 +691,9 @@ class SOTAMemorySystemReACT(dspy.Module):
         )
 
 
-def create_sota_memory_system() -> SOTAMemorySystemReACT:
-    """Factory function to create the SOTA memory system with ReACT."""
-    return SOTAMemorySystemReACT()
+def create_sota_memory_system() -> SOTAMemorySystem:
+    """Factory function to create the SOTA memory system."""
+    return SOTAMemorySystem()
 
 
 if __name__ == "__main__":
