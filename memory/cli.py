@@ -6,10 +6,10 @@ Simple and clean CLI for running the memory system.
 Usage Examples:
     # Quick demo
     python cli.py --demo --limit 20
-    
+
     # Full evaluation
     python cli.py --evaluate --limit 100
-    
+
     # Benchmark run
     python cli.py --benchmark
 """
@@ -35,7 +35,7 @@ def setup_environment():
     if not api_key:
         print("❌ API key not found! Please set TOGETHER_API_KEY environment variable.")
         sys.exit(1)
-    
+
     # Configure DSPy
     try:
         MODEL = "together_ai/deepseek-ai/DeepSeek-R1-0528-tput"
@@ -45,184 +45,7 @@ def setup_environment():
         return lm
     except Exception as e:
         print(f"❌ Failed to configure model: {e}")
-        print("   Please check your API key and try again")
         sys.exit(1)
-
-
-def run_demo(limit: int = 20):
-    """Run a quick demo of the memory system."""
-    print(f"\n🎯 Running Memory System Demo (limit: {limit})")
-    print("=" * 60)
-    
-    # Load dataset
-    print("📚 Loading LOCOMO dataset...")
-    try:
-        dataset = load_locomo_dataset("./data/locomo10.json")
-        examples = dataset.get_examples(limit=limit)
-        print(f"📊 Demo dataset: {len(examples)} examples")
-    except Exception as e:
-        print(f"❌ Failed to load dataset: {e}")
-        return 0.0
-    
-    # Create memory system
-    print("🏗️  Creating memory system...")
-    memory_system = create_memory_system()
-    
-    # For demo, build memories from first conversation to get realistic results
-    print("💾 Building memories from first conversation...")
-    if examples:
-        sample_id = examples[0].sample_id
-        for sample in dataset.raw_data:
-            if sample["sample_id"] == sample_id:
-                try:
-                    print(f"   Processing conversation {sample_id}...")
-                    memory_system.process_conversation(sample, sample_id)
-                    print(f"   ✓ Built {len(memory_system.memories)} memories")
-                    break
-                except Exception as e:
-                    print(f"   ⚠️  Error: {e}")
-                    break
-    
-    print(f"🧠 Memory store ready with {len(memory_system.memories)} memories")
-    
-    # Alternative: Build minimal memories from just first conversation
-    # print("💾 Building minimal memories from first conversation...")
-    # if examples:
-    #     sample_id = examples[0].sample_id
-    #     for sample in dataset.raw_data:
-    #         if sample["sample_id"] == sample_id:
-    #             try:
-    #                 print(f"   Processing conversation {sample_id}...")
-    #                 memory_system.process_conversation(sample, sample_id)
-    #                 print(f"   ✓ Built {len(memory_system.memories)} memories")
-    #                 break
-    #             except Exception as e:
-    #                 print(f"   ⚠️  Error: {e}")
-    #                 break
-    
-    # Test a few questions
-    print("\n🤔 Testing questions...")
-    # Use all available examples for demo, up to 5
-    test_examples = examples[:min(5, len(examples))]
-    
-    correct_count = 0
-    total_count = 0
-    
-    category_map = {
-        1: "multi-hop",
-        2: "temporal", 
-        3: "single-hop",
-        4: "unanswerable",
-        5: "ambiguous",
-    }
-    
-    for i, example in enumerate(test_examples):
-        print(f"\n--- Question {i+1} ---")
-        print(f"Q: {example.question}")
-        print(f"Ground Truth: {example.answer}")
-        print(f"Category: {example.category}")
-        
-        # Get answer from memory system
-        question_category = category_map.get(example.category, "single-hop")
-        
-        print("   Generating answer...")
-        try:
-            result = memory_system.answer_question(example.question, question_category)
-            print(f"Prediction: {result['answer']}")
-            print(f"Confidence: {result['confidence']}")
-            
-            # Use LLM judge for accurate evaluation like Mem0 paper
-            print("   Evaluating with LLM judge...")
-            
-            try:
-                evaluation = memory_system.evaluate_with_llm_judge(
-                    example.question, example.answer, result["answer"]
-                )
-                is_correct = evaluation["is_correct"]
-                correct_count += int(is_correct)
-                total_count += 1
-                
-                status = "✅ CORRECT" if is_correct else "❌ WRONG"
-                print(f"LLM Judge: {status} - {evaluation['reasoning']}")
-                
-            except Exception as e:
-                print(f"   ⚠️  LLM judge error: {e}")
-                # Fallback to simple evaluation
-                ground_truth_words = set(example.answer.lower().split())
-                prediction_words = set(result['answer'].lower().split())
-                overlap = len(ground_truth_words.intersection(prediction_words))
-                is_correct = overlap > 0 and overlap >= len(ground_truth_words) * 0.3
-                correct_count += int(is_correct)
-                total_count += 1
-                
-                status = "✅ CORRECT" if is_correct else "❌ WRONG"
-                reasoning = f"Fallback word overlap: {overlap}/{len(ground_truth_words)} words"
-                print(f"Simple Judge: {status} - {reasoning}")
-            
-        except Exception as e:
-            print(f"   ❌ Error generating answer: {e}")
-            print(f"Prediction: Unable to generate answer")
-            print(f"Simple Judge: ❌ WRONG - Error occurred")
-            total_count += 1
-    
-    accuracy = correct_count / total_count if total_count > 0 else 0
-    print(f"\n📊 Demo Results:")
-    print(f"   Accuracy: {accuracy:.3f} ({correct_count}/{total_count})")
-    print(f"   Performance: {accuracy*100:.1f}%")
-    
-    if accuracy >= 0.68:
-        print("🏆 Demo achieved >68% target!")
-    else:
-        print(f"📈 Need {(0.68 - accuracy)*100:.1f}% more to reach 68% target")
-    
-    return accuracy
-
-
-def run_demo_offline(limit: int = 5):
-    """Run an offline demo that shows system architecture without API calls."""
-    print(f"\n🎯 Running Offline Demo (limit: {limit})")
-    print("   This demo shows the system architecture without making API calls")
-    print("=" * 60)
-    
-    # Load dataset
-    print("📚 Loading LOCOMO dataset...")
-    try:
-        dataset = load_locomo_dataset("./data/locomo10.json")
-        examples = dataset.get_examples(limit=limit)
-        print(f"📊 Demo dataset: {len(examples)} examples")
-    except Exception as e:
-        print(f"❌ Failed to load dataset: {e}")
-        return 0.0
-    
-    # Show system components
-    print("\n🏗️  Memory System Architecture:")
-    print("   ✓ Memory store (persistent)")
-    print("   ✓ Memory extractor (DSPy module)")
-    print("   ✓ Memory updater (DSPy module)")
-    print("   ✓ ReACT memory searcher (DSPy module)")
-    print("   ✓ Memory ranker (DSPy module)")
-    print("   ✓ QA generator (DSPy module)")
-    print("   ✓ LOCOMO LLM judge integration")
-    
-    # Show sample questions
-    print(f"\n🤔 Sample Questions from Dataset:")
-    for i, example in enumerate(examples[:3]):
-        print(f"\n--- Question {i+1} ---")
-        print(f"Q: {example.question}")
-        print(f"Expected Answer: {example.answer}")
-        print(f"Category: {example.category}")
-        print(f"Sample ID: {example.sample_id}")
-    
-    print(f"\n📊 Offline Demo Results:")
-    print(f"   Dataset loaded: ✅")
-    print(f"   Questions available: {len(examples)}")
-    print(f"   System components: ✅")
-    print(f"   Ready for API-based evaluation: ✅")
-    print(f"\n💡 To run with LLM inference:")
-    print(f"   1. Set TOGETHER_API_KEY environment variable")
-    print(f"   2. Run: python cli.py --demo --limit {limit}")
-    
-    return 1.0
 
 
 def run_full_evaluation(limit: int = None, num_threads: int = 4):
@@ -231,22 +54,21 @@ def run_full_evaluation(limit: int = None, num_threads: int = 4):
     if limit:
         print(f"   (Limited to {limit} examples)")
     print(f"   Using {num_threads} threads for parallel evaluation")
-    print("=" * 60)
-    
+
     # Load dataset
     print("📚 Loading LOCOMO dataset...")
     dataset = load_locomo_dataset("./data/locomo10.json")
     examples = dataset.get_examples(limit=limit)
     print(f"📊 Evaluation dataset: {len(examples)} examples")
-    
+
     # Create memory system
     print("🏗️  Creating memory system...")
     memory_system = create_memory_system()
-    
+
     # Build memories from conversations
     print("💾 Building memories from conversations...")
     processed_conversations = set()
-    
+
     for example in examples:
         sample_id = example.sample_id
         if sample_id not in processed_conversations:
@@ -259,9 +81,9 @@ def run_full_evaluation(limit: int = None, num_threads: int = 4):
                         break
                     except Exception as e:
                         print(f"   ⚠️  Error processing {sample_id}: {e}")
-    
+
     print(f"🧠 Built memory store with {len(memory_system.memories)} memories")
-    
+
     # Prepare examples for DSPy evaluation
     category_map = {
         1: "multi-hop",
@@ -270,7 +92,7 @@ def run_full_evaluation(limit: int = None, num_threads: int = 4):
         4: "unanswerable",
         5: "ambiguous",
     }
-    
+
     # Create DSPy examples
     dspy_examples = []
     for example in examples:
@@ -279,23 +101,21 @@ def run_full_evaluation(limit: int = None, num_threads: int = 4):
             dspy.Example(
                 question=example.question,
                 question_category=question_category,
-                ground_truth=example.answer
-            ).with_inputs('question', 'question_category')
+                ground_truth=example.answer,
+            ).with_inputs("question", "question_category")
         )
-    
+
     # Define metric function for LLM-as-Judge evaluation
     def llm_judge_metric(example, prediction, trace=None):
         """Evaluate prediction using LLM-as-Judge."""
         try:
             evaluation = memory_system.evaluate_with_llm_judge(
-                example.question, 
-                example.ground_truth, 
-                prediction.answer
+                example.question, example.ground_truth, prediction.answer
             )
             return evaluation["is_correct"]
         except:
             return False
-    
+
     # Run parallel evaluation using DSPy
     print("🤔 Running parallel evaluation with DSPy...")
     evaluator = dspy.evaluate.Evaluate(
@@ -303,46 +123,64 @@ def run_full_evaluation(limit: int = None, num_threads: int = 4):
         metric=llm_judge_metric,
         num_threads=num_threads,
         display_progress=True,
-        display_table=0
+        display_table=0,
     )
-    
+
     # Run evaluation
     score = evaluator(memory_system)
-    
+
     # Alternative: Use batch processing for faster inference
     # This can be enabled for even better performance
     # predictions = memory_system.batch(dspy_examples)
     # correct = sum(llm_judge_metric(ex, pred) for ex, pred in zip(dspy_examples, predictions))
     # score = correct / len(dspy_examples)
-    
+
     print(f"\n🎯 Full Evaluation Complete!")
     print(f"   Overall LLM-as-Judge Score: {score:.3f} ({score*100:.1f}%)")
-    
+
     return {"overall_llm_judge_score": score}
 
 
-def run_benchmark(num_threads: int = 8):
+def run_quick_benchmark(limit: int = 20, num_threads: int = 8):
+    """Run a quick benchmark to compare with Mem0 paper results."""
+    print(f"\n🏁 Running Quick Memory System Benchmark")
+    print(f"   Using {limit} examples with {num_threads} threads")
+
+    # Run smaller evaluation for speed
+    print("📊 Running Quick Benchmark Evaluation")
+    results = run_full_evaluation(limit=limit, num_threads=num_threads)
+    final_score = results["overall_llm_judge_score"]
+
+    # Compare with Mem0 results
+    mem0_single_hop = 0.6713  # 67.13% from paper
+    mem0_multi_hop = 0.5115  # 51.15% from paper
+    mem0_overall_avg = (mem0_single_hop + mem0_multi_hop) / 2  # ~59.14%
+
+    # Final results
+    print(f"\n🏁 QUICK BENCHMARK RESULTS:")
+    print(f"   Our Score: {final_score:.3f} ({final_score*100:.1f}%)")
+    print(f"   Mem0 Single-hop: {mem0_single_hop:.3f} ({mem0_single_hop*100:.1f}%)")
+    print(f"   Mem0 Multi-hop: {mem0_multi_hop:.3f} ({mem0_multi_hop*100:.1f}%)")
+    print(f"   Mem0 Avg: {mem0_overall_avg:.3f} ({mem0_overall_avg*100:.1f}%)")
+
+    return final_score
+
+
+def run_benchmark(num_threads: int = 16):
     """Run full benchmark for performance."""
     print(f"\n🏁 Running Memory System Benchmark")
-    print("   Target: >68% LLM-as-Judge performance on LOCOMO")
     print(f"   Using {num_threads} threads for maximum performance")
     print("=" * 60)
-    
+
     # Run evaluation
     print("📊 Running Benchmark Evaluation")
-    results = run_full_evaluation(limit=500, num_threads=num_threads)  # Use substantial subset
+    results = run_full_evaluation(num_threads=num_threads)  # Use substantial subset
     final_score = results["overall_llm_judge_score"]
-    
+
     # Final results
     print(f"\n🏁 BENCHMARK RESULTS:")
     print(f"   Final Score: {final_score:.3f} ({final_score*100:.1f}%)")
-    print(f"   Target Score: 0.680 (68.0%)")
-    
-    if final_score >= 0.68:
-        print("🏆 BENCHMARK PASSED!")
-    else:
-        print(f"📈 Need {(0.68 - final_score)*100:.1f}% more to reach target")
-    
+
     return final_score
 
 
@@ -352,35 +190,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Offline demo (no API key needed)
-    python cli.py --demo-offline --limit 5
-    
-    # Quick demo with LLM inference
-    python cli.py --demo --limit 20
-    
-    # Full evaluation with parallelization
-    python cli.py --evaluate --limit 100 --num-threads 8
-    
     # Benchmark run
     python cli.py --benchmark --num-threads 16
         """,
     )
-    
+
     # Mode selection
     mode_group = parser.add_mutually_exclusive_group(required=True)
     mode_group.add_argument(
-        "--demo", action="store_true", help="Run quick demo with sample questions"
+        "--quick-benchmark",
+        action="store_true",
+        help="Run quick benchmark vs Mem0 paper",
     )
     mode_group.add_argument(
-        "--demo-offline", action="store_true", help="Run offline demo without API calls"
+        "--benchmark", action="store_true", help="Run full benchmark for performance"
     )
-    mode_group.add_argument(
-        "--evaluate", action="store_true", help="Run full evaluation"
-    )
-    mode_group.add_argument(
-        "--benchmark", action="store_true", help="Run benchmark for performance"
-    )
-    
+
     # Parameters
     parser.add_argument(
         "--limit", type=int, default=None, help="Limit number of examples"
@@ -389,44 +214,38 @@ Examples:
         "--data-path", default="./data/locomo10.json", help="Path to LOCOMO dataset"
     )
     parser.add_argument(
-        "--num-threads", type=int, default=4, help="Number of threads for parallel evaluation"
+        "--num-threads",
+        type=int,
+        default=4,
+        help="Number of threads for parallel evaluation",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Setup
-    print("🎯 Memory System for LOCOMO")
-    print("   Clean implementation with LOCOMO modules")
-    print("")
-    
-    # For offline demo, skip API setup
-    if not args.demo_offline:
-        lm = setup_environment()
-    
+    print("🎯 Memory System")
+
     # Check if dataset exists
     if not Path(args.data_path).exists():
         print(f"❌ Dataset not found: {args.data_path}")
         print("   Please ensure the LOCOMO dataset is available")
         sys.exit(1)
-    
+
     # Run selected mode
     try:
-        if args.demo:
-            result = run_demo(args.limit or 20)
-        elif args.demo_offline:
-            result = run_demo_offline(args.limit or 5)
-        elif args.evaluate:
-            result = run_full_evaluation(args.limit, args.num_threads)
+        if args.quick_benchmark:
+            result = run_quick_benchmark(args.limit or 20, args.num_threads)
         elif args.benchmark:
             result = run_benchmark(args.num_threads)
-        
+
         print("\n✅ Run completed successfully!")
-    
+
     except KeyboardInterrupt:
         print("\n⏹️  Run interrupted by user")
     except Exception as e:
         print(f"\n❌ Error during execution: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
