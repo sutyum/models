@@ -1,6 +1,6 @@
-# LOCOMO Memory Benchmark
+# Memory System for Conversational QA
 
-Lean implementation of the LOCOMO (Long-Context Multi-turn Conversational QA) benchmark using DSPy and Mem0-inspired memory architecture.
+DSPy-based adaptive memory system for multi-hop conversational QA using the LOCOMO benchmark.
 
 ## Setup
 
@@ -9,27 +9,28 @@ export TOGETHER_API_KEY="your_api_key_here"
 uv install
 ```
 
-## Usage
+## Scripts
 
+### 1. Prompt Optimization
 ```bash
-# Quick demo
-python run_sota_locomo.py --demo --limit 20
-
-# Full evaluation
-python run_sota_locomo.py --evaluate --limit 100
-
-# Benchmark run
-python run_sota_locomo.py --benchmark
+# Optimize prompts using MIPROv2
+python optimize.py --num-train 50 --num-val 20
 ```
 
-## Architecture
+### 2. Model Training (GRPO)
+```bash
+# Train with reinforcement learning
+python train.py --num-train 600 --num-train-steps 500
+```
 
-- **Memory System**: DSPy-based memory extraction and ReACT search (no embeddings)
-- **Evaluation**: LLM-as-Judge methodology from Mem0 paper
-- **Target**: >68% performance on LOCOMO benchmark
+### 3. Evaluation
+```bash
+# Compare Simple Predict vs Memory System
+python evaluate.py --num-test 100
+```
 
-## Files
+## Memory System
 
-- `locomo/` - Core implementation
-- `data/locomo10.json` - LOCOMO dataset
-- `run_sota_locomo.py` - Main runner
+- **Adaptive Memory**: Token-aware storage with 20K limit
+- **Multi-hop Reasoning**: Dynamic memory updates and queries  
+- **LLM-as-Judge**: Evaluation using LOCOMO metrics
