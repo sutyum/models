@@ -97,8 +97,7 @@ def prepare_training_data(file_path: str, num_examples: int = 100) -> list[dspy.
 
 def optimize_memory_system(
     train_file: str = "data/locomo_train.json",
-    num_train: int = 50,
-    num_val: int = 20,
+    num_examples: int = 50,
     num_threads: int = 4,
     max_demos: int = 5,
 ):
@@ -106,15 +105,14 @@ def optimize_memory_system(
     Optimize the memory system using DSPy's SIMBA optimizer.
     
     This function:
-    1. Loads training and validation data from split LOCOMO files
+    1. Loads training data from split LOCOMO files
     2. Initializes the memory system with QA capabilities
     3. Uses SIMBA to optimize prompts and few-shot examples (much faster than MIPROv2)
     4. Saves the optimized program to 'optimized_memory_qa.json'
     
     Args:
         train_file: Path to training data JSON file
-        num_train: Number of training examples to use
-        num_val: Number of validation examples to use
+        num_examples: Number of examples to use for optimization
         num_threads: Number of threads for parallel optimization
         max_demos: Maximum demonstrations per predictor
     """
@@ -128,35 +126,28 @@ def optimize_memory_system(
     dspy.configure(lm=lm)
     
     print("Loading LOCOMO dataset...")
-    train_data = prepare_training_data(train_file, num_train)
-    val_data = prepare_training_data("data/locomo_val.json", num_val)
-
-    print(
-        f"Prepared {len(train_data)} training examples and {len(val_data)} validation examples"
-    )
+    train_data = prepare_training_data(train_file, num_examples)
+    
+    print(f"Prepared {len(train_data)} examples for optimization")
 
     print("Initializing memory system...")
     memory_qa = create_memory_system_qa(persist=True)
 
     metric = LOCOMOMetric()
 
-    # SIMBA uses all data for optimization (combines train+val)
-    all_data = train_data + val_data
-    print(f"Using {len(all_data)} examples for SIMBA optimization...")
-    
     print("Starting optimization with SIMBA (much faster than MIPROv2)...")
     optimizer = SIMBA(
         metric=metric,
         max_demos=max_demos,
         num_threads=num_threads,
-        max_steps=8,
-        num_candidates=6,
-        bsize=min(len(all_data), 16),  # Adjust batch size based on total data
+        max_steps=6,  # Reduced for faster optimization
+        num_candidates=4,  # Reduced for faster optimization
+        bsize=min(len(train_data), 8),  # Smaller batch size for speed
     )
     
     optimized_program = optimizer.compile(
         memory_qa,
-        trainset=all_data,
+        trainset=train_data,
     )
 
     optimized_program.save("optimized_memory_qa.json")
@@ -170,10 +161,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Optimize memory system for LOCOMO")
     parser.add_argument(
-        "--num-train", type=int, default=50, help="Number of training examples"
-    )
-    parser.add_argument(
-        "--num-val", type=int, default=20, help="Number of validation examples"
+        "--num-examples", type=int, default=50, help="Number of examples for optimization"
     )
     parser.add_argument(
         "--num-threads", type=int, default=4, help="Number of threads for optimization"
@@ -186,8 +174,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     optimize_memory_system(
-        num_train=args.num_train,
-        num_val=args.num_val,
+        num_examples=args.num_examples,
         num_threads=args.num_threads,
         max_demos=args.max_demos
     )

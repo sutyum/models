@@ -13,8 +13,11 @@ uv install
 
 ### 1. Prompt Optimization
 ```bash
-# Optimize prompts using MIPROv2
-python optimize.py --num-train 50 --num-val 20
+# Optimize prompts using SIMBA (fast)
+python optimize.py --num-examples 30 --max-demos 3
+
+# For faster testing
+python optimize.py --num-examples 15 --max-demos 2
 ```
 
 ### 2. Model Training (GRPO)
