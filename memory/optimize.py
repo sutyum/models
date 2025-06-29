@@ -1,7 +1,7 @@
 import dspy
 import json
 import os
-from dspy.teleprompt import MIPROv2
+from dspy.teleprompt import SIMBA
 from memory_system import MemorySystem
 from locomo.evaluate import LOCOMOMetric
 
@@ -100,16 +100,15 @@ def optimize_memory_system(
     num_train: int = 50,
     num_val: int = 20,
     num_threads: int = 4,
-    max_bootstrapped_demos: int = 3,
-    max_labeled_demos: int = 3,
+    max_demos: int = 5,
 ):
     """
-    Optimize the memory system using DSPy's MIPROv2 optimizer.
+    Optimize the memory system using DSPy's SIMBA optimizer.
     
     This function:
     1. Loads training and validation data from split LOCOMO files
     2. Initializes the memory system with QA capabilities
-    3. Uses MIPROv2 to optimize prompts and few-shot examples
+    3. Uses SIMBA to optimize prompts and few-shot examples (much faster than MIPROv2)
     4. Saves the optimized program to 'optimized_memory_qa.json'
     
     Args:
@@ -117,8 +116,7 @@ def optimize_memory_system(
         num_train: Number of training examples to use
         num_val: Number of validation examples to use
         num_threads: Number of threads for parallel optimization
-        max_bootstrapped_demos: Max bootstrapped demonstrations per predictor
-        max_labeled_demos: Max labeled demonstrations per predictor
+        max_demos: Maximum demonstrations per predictor
     """
     # Configure DSPy with language model
     api_key = os.getenv("TOGETHER_API_KEY")
@@ -142,24 +140,23 @@ def optimize_memory_system(
 
     metric = LOCOMOMetric()
 
-    print("Starting optimization with MIPROv2...")
-    optimizer = MIPROv2(
+    # SIMBA uses all data for optimization (combines train+val)
+    all_data = train_data + val_data
+    print(f"Using {len(all_data)} examples for SIMBA optimization...")
+    
+    print("Starting optimization with SIMBA (much faster than MIPROv2)...")
+    optimizer = SIMBA(
         metric=metric,
-        auto=None,
-        num_candidates=5,
-        init_temperature=0.7,
-        max_bootstrapped_demos=max_bootstrapped_demos,
-        max_labeled_demos=max_labeled_demos,
+        max_demos=max_demos,
         num_threads=num_threads,
+        max_steps=8,
+        num_candidates=6,
+        bsize=min(len(all_data), 16),  # Adjust batch size based on total data
     )
-
+    
     optimized_program = optimizer.compile(
         memory_qa,
-        trainset=train_data,
-        valset=val_data,
-        num_trials=5,
-        minibatch_size=min(len(val_data), 4),
-        requires_permission_to_run=False,
+        trainset=all_data,
     )
 
     optimized_program.save("optimized_memory_qa.json")
@@ -182,12 +179,8 @@ if __name__ == "__main__":
         "--num-threads", type=int, default=4, help="Number of threads for optimization"
     )
     parser.add_argument(
-        "--max-bootstrapped-demos", type=int, default=3,
-        help="Maximum bootstrapped demonstrations per predictor"
-    )
-    parser.add_argument(
-        "--max-labeled-demos", type=int, default=3,
-        help="Maximum labeled demonstrations per predictor"
+        "--max-demos", type=int, default=5,
+        help="Maximum demonstrations per predictor"
     )
 
     args = parser.parse_args()
@@ -196,6 +189,5 @@ if __name__ == "__main__":
         num_train=args.num_train,
         num_val=args.num_val,
         num_threads=args.num_threads,
-        max_bootstrapped_demos=args.max_bootstrapped_demos,
-        max_labeled_demos=args.max_labeled_demos
+        max_demos=args.max_demos
     )
