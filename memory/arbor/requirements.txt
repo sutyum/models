@@ -1,0 +1,14 @@
+# Core Arbor dependencies
+arbor-ai
+dspy-ai
+
+# PyTorch and ML dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+
+# RunPod SDK
+runpod>=1.0.0
+
+# Additional dependencies
+pyyaml>=6.0
+tenacity>=8.0.0

@@ -7,6 +7,9 @@ import yaml
 import time
 import logging
 import argparse
+import base64
+import tarfile
+import tempfile
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Any
@@ -117,7 +120,7 @@ class PodConfig:
     gpu_count: int = 1
     disk_size_gb: int = 50
     volume_size_gb: int = 100
-    image_name: str = "pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime"
+    image_name: str = "runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04"
     ports: str = "8000/http,22/tcp"
     support_public_ip: bool = True
 
@@ -150,6 +153,7 @@ class RunPodDeployer:
             f"Creating pod '{pod_config.name}' with {pod_config.gpu_count} {pod_config.gpu_type.short_name} GPU(s)"
         )
 
+        # Create startup script that extracts and runs the arbor files
         startup_script = self._generate_startup_script(arbor_config)
 
         try:
@@ -207,44 +211,58 @@ class RunPodDeployer:
         runpod.terminate_pod(pod_id)
         logger.info("Pod terminated successfully")
 
-    @staticmethod
-    def _generate_startup_script(arbor_config: ArborConfig) -> str:
+    def _generate_startup_script(self, arbor_config: ArborConfig) -> str:
         """Generate startup script for the pod."""
-        arbor_yaml = arbor_config.to_yaml()
-
+        # Get the arbor directory path
+        arbor_dir = Path(__file__).parent
+        
+        # Create a tarball of the arbor directory
+        tar_content = self._create_arbor_tarball(arbor_dir, arbor_config)
+        
         return f"""#!/bin/bash
 set -e
 
 echo "Starting Arbor server setup..."
 
-# Update and install dependencies
-apt-get update && apt-get install -y git curl
+# Create arbor directory
+mkdir -p /arbor
+cd /arbor
 
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.cargo/env
+# Extract arbor files
+echo "{tar_content}" | base64 -d | tar -xzf -
 
-# Setup workspace
-mkdir -p /workspace
-cd /workspace
+# Make startup script executable
+chmod +x /arbor/startup.sh
 
-# Write arbor.yaml
-cat > arbor.yaml << 'EOF'
-{arbor_yaml}
-EOF
-
-# Setup Python environment
-uv python install 3.11
-uv venv
-source .venv/bin/activate
-
-# Install Arbor and dependencies
-uv add arbor-ai dspy-ai torch torchvision
-
-# Start Arbor server
-echo "Starting Arbor server on port 8000..."
-uv run python -m arbor.cli serve --arbor-config arbor.yaml --host 0.0.0.0 --port 8000
+# Execute startup script
+/arbor/startup.sh
 """
+    
+    def _create_arbor_tarball(self, arbor_dir: Path, arbor_config: ArborConfig) -> str:
+        """Create a base64-encoded tarball of the arbor directory."""
+        with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_file:
+            try:
+                with tarfile.open(tmp_file.name, 'w:gz') as tar:
+                    # Add all files from arbor directory
+                    for file_path in arbor_dir.iterdir():
+                        if file_path.name not in ['.git', '__pycache__', '*.pyc']:
+                            if file_path.is_file():
+                                tar.add(file_path, arcname=file_path.name)
+                    
+                    # Create a temporary arbor.yaml with the config
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as yaml_file:
+                        yaml_file.write(arbor_config.to_yaml())
+                        yaml_file.flush()
+                        tar.add(yaml_file.name, arcname='arbor.yaml')
+                        os.unlink(yaml_file.name)
+                
+                # Read and encode the tarball
+                with open(tmp_file.name, 'rb') as f:
+                    tar_content = base64.b64encode(f.read()).decode('utf-8')
+                
+                return tar_content
+            finally:
+                os.unlink(tmp_file.name)
 
     @staticmethod
     def _is_pod_ready(pod: dict[str, Any]) -> bool:
@@ -300,16 +318,16 @@ def main():
         epilog="""
 Examples:
   Deploy with default settings:
-    python deploy_arbor.py
+    python arbor/deploy.py
   
   Deploy with A100 GPU:
-    python deploy_arbor.py --gpu-type A100
+    python arbor/deploy.py --gpu-type A100
   
   List all pods:
-    python deploy_arbor.py --list
+    python arbor/deploy.py --list
   
   Terminate a pod:
-    python deploy_arbor.py --terminate <pod-id>
+    python arbor/deploy.py --terminate <pod-id>
 """,
     )
 
@@ -349,6 +367,7 @@ Examples:
     api_key = args.api_key or os.environ.get("RUNPOD_API_KEY")
     if not api_key:
         logger.error("RunPod API key not provided")
+        print("Set RUNPOD_API_KEY environment variable or use --api-key flag")
         sys.exit(1)
 
     deployer = RunPodDeployer(api_key)
@@ -391,10 +410,16 @@ Examples:
         print(f"\n🌐 Arbor URL: {connection_info.arbor_url}")
         if connection_info.ssh_command:
             print(f"🔐 SSH Access: {connection_info.ssh_command}")
+
+        print(f"\n📝 To connect from DSPy:")
+        print(f"   import dspy")
+        print(f"   dspy.settings.configure(arbor_url='{connection_info.arbor_url}')")
+
         print(f"\n🛑 To terminate this pod:")
-        print(f"   python {Path(__file__).name} --terminate {pod_id}")
+        print(f"   python arbor/deploy.py --terminate {pod_id}")
     except FileNotFoundError as e:
         logger.error(f"Configuration file not found: {e}")
+        print("Please create an arbor.yaml file with your configuration")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Deployment failed: {e}")
