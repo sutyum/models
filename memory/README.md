@@ -7,11 +7,20 @@ DSPy-based adaptive memory system for multi-hop conversational QA using the LOCO
 ```bash
 export TOGETHER_API_KEY="your_api_key_here"
 uv install
+
+# Start mlflow server for tracing
+uv run mlflow server --backend-store-uri sqlite:///mydb.sqlite
 ```
 
 ## Scripts
 
-### 1. Prompt Optimization
+Generate Dataset Splits
+```bash
+# Generate train, validation, and test splits for the LOCOMO dataset
+python locomo/split_data.py
+```
+
+Prompt Optimization
 ```bash
 # Optimize prompts using SIMBA (fast)
 python optimize.py --num-examples 30 --max-demos 3
@@ -20,13 +29,13 @@ python optimize.py --num-examples 30 --max-demos 3
 python optimize.py --num-examples 15 --max-demos 2
 ```
 
-### 2. Model Training (GRPO)
+Model Training (GRPO)
 ```bash
 # Train with reinforcement learning
 python train.py --num-train 600 --num-train-steps 500
 ```
 
-### 3. Evaluation
+Evaluation
 ```bash
 # Compare Simple Predict vs Memory System
 python evaluate.py --num-test 100

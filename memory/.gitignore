@@ -12,3 +12,6 @@ data/*.json
 *.pkl
 grpo_checkpoints/
 *.log
+
+wandb/
+
