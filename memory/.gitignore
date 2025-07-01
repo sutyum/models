@@ -14,4 +14,4 @@ grpo_checkpoints/
 *.log
 
 wandb/
-
+results/

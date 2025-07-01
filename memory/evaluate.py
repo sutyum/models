@@ -117,11 +117,11 @@ def compare_systems(
     api_key = os.getenv("TOGETHER_API_KEY")
     if not api_key:
         raise ValueError("TOGETHER_API_KEY environment variable not set")
-    
+
     MODEL = "together_ai/deepseek-ai/DeepSeek-R1-0528-tput"
     lm = dspy.LM(MODEL, api_key=api_key, max_tokens=20_000)
     dspy.configure(lm=lm)
-    
+
     print("Loading test dataset...")
     test_data = prepare_training_data(test_file, num_test)
 
@@ -223,18 +223,16 @@ def compare_systems(
     return results_dict
 
 
-def analyze_failures(
-    test_file: str = "data/locomo_test.json", num_examples: int = 20
-):
+def analyze_failures(test_file: str = "data/locomo_test.json", num_examples: int = 20):
     # Configure DSPy with language model
     api_key = os.getenv("TOGETHER_API_KEY")
     if not api_key:
         raise ValueError("TOGETHER_API_KEY environment variable not set")
-    
+
     MODEL = "together_ai/deepseek-ai/DeepSeek-R1-0528-tput"
     lm = dspy.LM(MODEL, api_key=api_key, max_tokens=20_000)
     dspy.configure(lm=lm)
-    
+
     print("Analyzing failure cases...")
     test_data = prepare_training_data(test_file, num_examples)
 

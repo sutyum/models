@@ -166,7 +166,7 @@ class LocomoDataset:
         }
 
 
-def load_locomo_dataset(data_path: str = "./data/locomo10.json") -> LocomoDataset:
+def load_locomo_dataset(data_path: str = "./data/locomo10.json") -> List[dspy.Example]:
     """
     Convenience function to load LOCOMO dataset.
     
@@ -174,9 +174,35 @@ def load_locomo_dataset(data_path: str = "./data/locomo10.json") -> LocomoDatase
         data_path: Path to LOCOMO data file
         
     Returns:
-        LocomoDataset instance
+        List of dspy.Example instances
     """
-    return LocomoDataset(data_path)
+    # Check if it's the new format (with 'version' key)
+    with open(data_path, 'r') as f:
+        data = json.load(f)
+    
+    if isinstance(data, dict) and 'version' in data:
+        # New format with version and examples
+        examples = []
+        for item in data['examples']:
+            # Each example has direct question/answer fields
+            if 'question' in item and 'answer' in item:
+                # For memory QA, we need current_state and new_information
+                # Since we don't have conversation context, use empty state
+                example = dspy.Example(
+                    current_state="No previous context available.",
+                    new_information=f"Question: {item['question']}",
+                    question=item['question'],
+                    answer=item['answer'],
+                    category=item.get('category', 1),
+                    evidence=item.get('evidence', []),
+                    id=item['id']
+                ).with_inputs("current_state", "new_information")
+                examples.append(example)
+        return examples
+    else:
+        # Old format
+        dataset = LocomoDataset(data_path)
+        return dataset.get_examples()
 
 
 if __name__ == "__main__":
