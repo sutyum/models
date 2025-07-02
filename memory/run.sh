@@ -12,7 +12,7 @@ fi
 # Default command, system, and model
 CMD=${1:-compare}
 SYSTEM=${2:-baseline}
-MODEL=${3:-qwen}
+MODEL=${3:-gemini_flash}
 
 case $CMD in
     optimize)

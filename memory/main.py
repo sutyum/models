@@ -25,15 +25,17 @@ from simple_memory import DSPyMemory, LOCOMOMemory
 from graph_memory import MemorySystem as GraphMemory
 
 # Default configuration
-DEFAULT_MODEL = "together_ai/Qwen/QwQ-32B-Preview"
-MAX_TOKENS = 30000
+DEFAULT_MODEL = "gemini_flash"
+MAX_TOKENS = 35000
 
 # Model configurations
 MODELS = {
-    "qwen": DEFAULT_MODEL,
-    "qwen_groq": "groq/llama-3.1-70b-versatile",
+    "qwen": "groq/qwen/qwen3-32b",
     "deepseek": "together_ai/deepseek-ai/DeepSeek-R1-0528-tput",
     "o4": "o4-mini",
+    "gemini_lite": "gemini/gemini-2.5-flash-lite-preview-06-17",
+    "gemini_flash": "gemini/gemini-2.5-flash",
+    "gemini_pro": "gemini/gemini-2.5-pro",
 }
 
 
@@ -99,7 +101,30 @@ def get_memory_system(system_type: str = "graph") -> MemoryInterface:
     return systems[system_type]()
 
 
-def configure_lm(model: str = "qwen"):
+def load_optimized_model(system_type: str, model_path: str) -> MemoryInterface:
+    """Enhanced loader for optimized models with program/JSON fallback."""
+    if not Path(model_path).exists():
+        return get_memory_system(system_type)
+        
+    # Try program load first
+    program_dir = model_path.replace(".json", "_program")
+    if Path(program_dir).exists():
+        try:
+            return dspy.load(program_dir)
+        except Exception as e:
+            click.echo(f"Warning: Program load failed: {e}")
+    
+    # Fallback to JSON load
+    memory_model = get_memory_system(system_type)
+    try:
+        memory_model.load(model_path)
+    except Exception as e:
+        click.echo(f"Warning: JSON load failed: {e}")
+    
+    return memory_model
+
+
+def configure_lm(model: str):
     """Configure language model with provider detection."""
     model_path = MODELS.get(model, model)  # Allow custom model paths
 
@@ -126,12 +151,19 @@ def configure_lm(model: str = "qwen"):
             click.echo(f"Error: Model '{model}' requires OPENAI_API_KEY")
             click.echo("Set it with: export OPENAI_API_KEY='your-openai-key'")
             raise click.Abort()
+    elif model_path.startswith("gemini/"):
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            click.echo(f"Error: Model '{model}' requires GEMINI_API_KEY")
+            click.echo("Set it with: export GEMINI_API_KEY='your-gemini-key'")
+            raise click.Abort()
     else:
         # Try available keys for custom models
         api_key = (
             os.getenv("TOGETHER_API_KEY")
             or os.getenv("GROQ_API_KEY")
             or os.getenv("OPENAI_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
         )
         if not api_key:
             click.echo("Error: No API key found")
@@ -139,12 +171,28 @@ def configure_lm(model: str = "qwen"):
             click.echo("  export TOGETHER_API_KEY='your-together-key'")
             click.echo("  export GROQ_API_KEY='your-groq-key'")
             click.echo("  export OPENAI_API_KEY='your-openai-key'")
+            click.echo("  export GEMINI_API_KEY='your-gemini-key'")
             raise click.Abort()
 
     try:
-        lm = dspy.LM(model_path, api_key=api_key, max_tokens=MAX_TOKENS)
+        # Configure Gemini models with thinking enabled
+        if model_path.startswith("gemini/"):
+            # Enable thinking for Gemini models with moderate thinking budget
+            thinking_budget = 1024  # Moderate reasoning for optimization tasks
+            lm = dspy.LM(
+                model_path,
+                api_key=api_key,
+                max_tokens=MAX_TOKENS,
+                thinking_budget=thinking_budget,
+            )
+            click.echo(
+                f"Configured {model} ({model_path}) with thinking_budget={thinking_budget}"
+            )
+        else:
+            lm = dspy.LM(model_path, api_key=api_key, max_tokens=MAX_TOKENS)
+            click.echo(f"Configured {model} ({model_path})")
+
         dspy.configure(lm=lm)
-        click.echo(f"Configured {model} ({model_path})")
     except Exception as e:
         click.echo(f"Error configuring model {model}: {e}")
         raise click.Abort()
@@ -178,11 +226,12 @@ def cli():
 @click.option("--threads", default=8, help="Number of threads for optimization")
 @click.option(
     "--model",
-    default="qwen",
+    default=DEFAULT_MODEL,
     type=click.Choice(list(MODELS.keys()) + ["custom"]),
     help="Model to use",
 )
-def optimize(train_data, output, system, method, num_demos, limit, threads, model):
+@click.option("--debug", is_flag=True, help="Show debug information about optimization")
+def optimize(train_data, output, system, method, num_demos, limit, threads, model, debug):
     """Optimize memory system using DSPy."""
     configure_lm(model)
 
@@ -203,17 +252,50 @@ def optimize(train_data, output, system, method, num_demos, limit, threads, mode
             metric=metric,
             max_demos=num_demos,
             num_threads=threads,
-            max_steps=6,
-            num_candidates=8,
-            bsize=min(len(train), 8),
+            max_steps=12,  # Increased from 6 for better optimization
+            num_candidates=16,  # Increased from 8 for more exploration
+            bsize=min(len(train), 16),  # Increased batch size
+            init_temperature=1.0,  # Add temperature for better exploration
         )
 
     optimized = optimizer.compile(memory_model, trainset=train)
 
-    # Save with metadata
-    output_path = output.replace(".json", f"_{system}.json")
+    if debug:
+        click.echo("\n=== OPTIMIZATION DEBUG ===")
+        click.echo(f"Base model: {memory_model}")
+        click.echo(f"Optimized model: {optimized}")
+        
+        # Check for demonstrations in optimized model
+        for attr_name in dir(optimized):
+            attr = getattr(optimized, attr_name)
+            if hasattr(attr, 'demos') and attr.demos:
+                click.echo(f"Found {len(attr.demos)} demos in {attr_name}")
+            elif hasattr(attr, 'signature') and hasattr(attr.signature, 'instructions'):
+                click.echo(f"Instructions in {attr_name}: {attr.signature.instructions[:100]}...")
+
+    # Save with metadata - include both system and model
+    output_path = output.replace(".json", f"_{system}_{model}.json")
+    
+    # Enhanced save: use both program save and JSON save
+    program_dir = output_path.replace(".json", "_program")
+    try:
+        # Primary save with full program serialization
+        optimized.save(program_dir, save_program=True)
+        click.echo(f"Saved optimized program to {program_dir}/")
+    except Exception as e:
+        click.echo(f"Warning: Program save failed: {e}")
+    
+    # Fallback JSON save
     optimized.save(output_path)
-    click.echo(f"Saved optimized {system} model to {output_path}")
+    click.echo(f"Saved optimized {system} model ({model}) to {output_path}")
+    
+    if debug:
+        click.echo(f"=== SAVED FILES ===")
+        if Path(program_dir).exists():
+            click.echo(f"Program directory: {program_dir}")
+            for f in Path(program_dir).iterdir():
+                click.echo(f"  - {f.name}")
+        click.echo(f"JSON file: {output_path} ({Path(output_path).stat().st_size} bytes)")
 
 
 @cli.command()
@@ -230,7 +312,7 @@ def optimize(train_data, output, system, method, num_demos, limit, threads, mode
 @click.option("--output", help="Output JSON file for results")
 @click.option(
     "--model",
-    default="qwen",
+    default=DEFAULT_MODEL,
     type=click.Choice(list(MODELS.keys()) + ["custom"]),
     help="Model to use",
 )
@@ -238,10 +320,8 @@ def evaluate(test_data, system, model_path, limit, threads, output, model):
     """Evaluate memory system using LOCOMO LLM judge."""
     configure_lm(model)
 
-    # Load model
-    memory_model = get_memory_system(system)
-    if model_path and Path(model_path).exists():
-        memory_model.load(model_path)
+    # Load model with enhanced loader
+    memory_model = load_optimized_model(system, model_path) if model_path else get_memory_system(system)
 
     # Load test data
     test = load_locomo_dataset(test_data)[:limit]
@@ -282,7 +362,7 @@ def evaluate(test_data, system, model_path, limit, threads, output, model):
 @click.option("--output-dir", default="results", help="Output directory")
 @click.option(
     "--model",
-    default="qwen",
+    default=DEFAULT_MODEL,
     type=click.Choice(list(MODELS.keys()) + ["custom"]),
     help="Model to use",
 )
@@ -312,14 +392,15 @@ def compare(test_data, systems, limit, threads, output_dir, model):
         base_model = get_memory_system(system_name)
         base_score = evaluator(base_model)
 
-        # Optimized model
-        opt_path = f"optimized_model_{system_name}.json"
+        # Optimized model - check for model-specific file first, then fallback
+        opt_path = f"optimized_model_{system_name}_{model}.json"
+        if not Path(opt_path).exists():
+            opt_path = f"optimized_model_{system_name}.json"  # Fallback to old naming
         opt_score = None
 
         if Path(opt_path).exists():
             click.echo(f"\nOptimized model ({opt_path}):")
-            opt_model = get_memory_system(system_name)
-            opt_model.load(opt_path)
+            opt_model = load_optimized_model(system_name, opt_path)
             opt_score = evaluator(opt_model)
 
         results[system_name] = {
@@ -337,10 +418,12 @@ def compare(test_data, systems, limit, threads, output_dir, model):
 
     for system, scores in results.items():
         # Convert from percentage (100.0) to decimal (1.0) for proper formatting
-        base_decimal = scores['base_score'] / 100.0
-        opt_decimal = scores['optimized_score'] / 100.0 if scores["optimized_score"] else None
-        delta_decimal = scores['improvement'] / 100.0 if scores["improvement"] else None
-        
+        base_decimal = scores["base_score"] / 100.0
+        opt_decimal = (
+            scores["optimized_score"] / 100.0 if scores["optimized_score"] else None
+        )
+        delta_decimal = scores["improvement"] / 100.0 if scores["improvement"] else None
+
         base = f"{base_decimal:.1%}"
         opt = f"{opt_decimal:.1%}" if opt_decimal is not None else "N/A"
         delta = f"{delta_decimal:+.1%}" if delta_decimal is not None else "N/A"
@@ -367,7 +450,7 @@ def compare(test_data, systems, limit, threads, output_dir, model):
 @click.option("--output", default="benchmark_results.json", help="Output file")
 @click.option(
     "--model",
-    default="qwen",
+    default=DEFAULT_MODEL,
     type=click.Choice(list(MODELS.keys()) + ["custom"]),
     help="Model to use",
 )
@@ -395,9 +478,13 @@ def benchmark(test_data, systems, configs, limit, threads, output, model):
             memory_model = get_memory_system(system_name)
 
             if config == "optimized":
-                opt_path = f"optimized_model_{system_name}.json"
+                opt_path = f"optimized_model_{system_name}_{model}.json"
+                if not Path(opt_path).exists():
+                    opt_path = (
+                        f"optimized_model_{system_name}.json"  # Fallback to old naming
+                    )
                 if Path(opt_path).exists():
-                    memory_model.load(opt_path)
+                    memory_model = load_optimized_model(system_name, opt_path)
                 else:
                     click.echo(f"  Skipping - no optimized model found")
                     continue
@@ -440,7 +527,7 @@ def benchmark(test_data, systems, configs, limit, threads, output, model):
 @click.option("--model-path", help="Path to optimized model")
 @click.option(
     "--model",
-    default="qwen",
+    default=DEFAULT_MODEL,
     type=click.Choice(list(MODELS.keys()) + ["custom"]),
     help="Model to use",
 )
@@ -448,10 +535,8 @@ def ask(question, conversation, system, model_path, model):
     """Interactive Q&A with chosen memory system."""
     configure_lm(model)
 
-    # Load model
-    memory_model = get_memory_system(system)
-    if model_path and Path(model_path).exists():
-        memory_model.load(model_path)
+    # Load model with enhanced loader 
+    memory_model = load_optimized_model(system, model_path) if model_path else get_memory_system(system)
 
     # Get conversation if not provided
     if not conversation:
