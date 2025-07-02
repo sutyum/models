@@ -184,19 +184,55 @@ def load_locomo_dataset(data_path: str = "./data/locomo10.json") -> List[dspy.Ex
         # New format with version and examples
         examples = []
         for item in data['examples']:
-            # Each example has direct question/answer fields
-            if 'question' in item and 'answer' in item:
-                # For memory QA, we need current_state and new_information
-                # Since we don't have conversation context, use empty state
+            # Check if conversation contains QA pairs (nested format)
+            if 'conversation' in item and isinstance(item['conversation'], dict) and 'qa' in item['conversation']:
+                # Extract QA pairs from conversation
+                for qa in item['conversation']['qa']:
+                    # Check if we have the conversation sessions data
+                    conversation_text = ""
+                    if 'session_1' in item['conversation']:
+                        # Format conversation sessions
+                        dataset = LocomoDataset.__new__(LocomoDataset)
+                        conversation_text = dataset._format_conversation(item['conversation'])
+                    else:
+                        # No conversation data available
+                        conversation_text = "No conversation context available."
+                    
+                    # Skip if no question or answer
+                    if 'question' not in qa or 'answer' not in qa:
+                        continue
+                        
+                    example = dspy.Example(
+                        conversation=conversation_text,
+                        question=qa['question'],
+                        answer=qa['answer'],
+                        category=qa.get('category', 1),
+                        evidence=qa.get('evidence', []),
+                        metadata={
+                            'id': item.get('id', ''),
+                            'category': qa.get('category', 1)
+                        }
+                    ).with_inputs("conversation", "question")
+                    examples.append(example)
+            elif 'question' in item and 'answer' in item:
+                # Direct question/answer format
+                conversation = ""
+                if 'conversation' in item and isinstance(item['conversation'], str):
+                    conversation = item['conversation']
+                elif 'context' in item:
+                    conversation = item['context']
+                
                 example = dspy.Example(
-                    current_state="No previous context available.",
-                    new_information=f"Question: {item['question']}",
+                    conversation=conversation if conversation else "No conversation context available.",
                     question=item['question'],
                     answer=item['answer'],
                     category=item.get('category', 1),
                     evidence=item.get('evidence', []),
-                    id=item['id']
-                ).with_inputs("current_state", "new_information")
+                    metadata={
+                        'id': item.get('id', ''),
+                        'category': item.get('category', 1)
+                    }
+                ).with_inputs("conversation", "question")
                 examples.append(example)
         return examples
     else:

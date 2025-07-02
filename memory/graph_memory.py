@@ -11,7 +11,7 @@ import dspy
 from datetime import datetime
 import pickle
 
-DEFAULT_MAX_TOKENS = 20_000
+DEFAULT_MAX_TOKENS = 30000
 
 
 class MemoryEvolution(dspy.Signature):
@@ -162,7 +162,8 @@ if __name__ == "__main__":
 
     api_key = os.environ.get("TOGETHER_API_KEY")
 
-    MODEL = "together_ai/Qwen/Qwen3-235B-A22B-fp8-tput"
+    DEFAULT_MAX_TOKENS = 20_000
+    MODEL = "together_ai/Qwen/Qwen4-235B-A22B-fp8-tput"
     # MODEL = "together_ai/google/gemma-3n-E4B-it"
 
     lm = dspy.LM(MODEL, api_key=api_key)
