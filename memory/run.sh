@@ -16,7 +16,7 @@ SYSTEM=${2:-baseline}
 case $CMD in
     optimize)
         echo "Optimizing ${SYSTEM} memory system..."
-        uv run python main.py optimize --system "$SYSTEM" --limit 20
+        uv run python main.py optimize --system "$SYSTEM" --method simba --threads 8 --limit 20
         ;;
     evaluate)
         echo "Evaluating ${SYSTEM} memory system..."
@@ -38,7 +38,7 @@ case $CMD in
         echo "Full evaluation pipeline..."
         for sys in baseline simple graph; do
             echo "Optimizing $sys..."
-            uv run python main.py optimize --system "$sys" --limit 50
+            uv run python main.py optimize --system "$sys" --method simba --threads 8 --limit 50
         done
         echo "Running comparison..."
         uv run python main.py compare --limit 50

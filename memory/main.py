@@ -7,7 +7,7 @@ Minimal implementation supporting multiple memory systems with comparative bench
 
 import dspy
 from dspy.evaluate import Evaluate
-from dspy.teleprompt import BootstrapFewShot, MIPROv2
+from dspy.teleprompt import BootstrapFewShot, MIPROv2, SIMBA
 import json
 import os
 from pathlib import Path
@@ -120,13 +120,14 @@ def cli():
 )
 @click.option(
     "--method",
-    default="bootstrap",
-    type=click.Choice(["bootstrap", "mipro"]),
+    default="simba",
+    type=click.Choice(["bootstrap", "mipro", "simba"]),
     help="Optimization method",
 )
 @click.option("--num-demos", default=5, help="Number of demonstrations")
 @click.option("--limit", default=50, help="Training examples limit")
-def optimize(train_data, output, system, method, num_demos, limit):
+@click.option("--threads", default=8, help="Number of threads for optimization")
+def optimize(train_data, output, system, method, num_demos, limit, threads):
     """Optimize memory system using DSPy."""
     configure_lm()
 
@@ -140,8 +141,17 @@ def optimize(train_data, output, system, method, num_demos, limit):
     # Optimize
     if method == "bootstrap":
         optimizer = BootstrapFewShot(metric=metric, max_bootstrapped_demos=num_demos)
-    else:
+    elif method == "mipro":
         optimizer = MIPROv2(metric=metric, num_candidates=10, init_temperature=0.7)
+    else:  # simba
+        optimizer = SIMBA(
+            metric=metric,
+            max_demos=num_demos,
+            num_threads=threads,
+            max_steps=6,
+            num_candidates=8,
+            bsize=min(len(train), 8)
+        )
 
     optimized = optimizer.compile(model, trainset=train)
 

@@ -34,9 +34,13 @@ pip install dspy-ai
 uv venv
 uv add dspy-ai click
 
-# Run commands
+# Run Python commands
 uv run python main.py optimize
-uv run ./run.sh evaluate
+uv run python main.py compare
+
+# Run shell scripts directly (NOT with uv run)
+./run.sh compare
+./run.sh optimize graph
 ```
 
 ## 🏗️ DSPy Best Practices
@@ -56,6 +60,10 @@ class QA(dspy.Signature):
     answer = dspy.OutputField()
 
 model = dspy.ChainOfThought(QA)
+
+# ✅ GOOD - Fast optimization with SIMBA
+optimizer = SIMBA(metric=metric, num_threads=8, max_demos=5)
+optimized = optimizer.compile(model, trainset=data)
 
 # ❌ BAD - Custom prompt engineering
 def answer_question(question):

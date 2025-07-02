@@ -15,10 +15,7 @@ A minimal implementation supporting multiple memory architectures with comprehen
 # Set up environment  
 export TOGETHER_API_KEY="your-key-here"
 
-# Install dependencies
-uv add dspy-ai click
-
-# Compare all systems
+# Compare all systems (quick)
 ./run.sh compare
 
 # Optimize specific system
@@ -27,8 +24,11 @@ uv add dspy-ai click
 # Full evaluation pipeline
 ./run.sh full-eval
 
-# Interactive Q&A
-uv run python main.py ask "What did they discuss?" --system graph
+# Direct usage examples
+uv run python main.py compare --limit 5
+uv run python main.py optimize --system graph --limit 20
+uv run python main.py evaluate --system simple --limit 10
+uv run python main.py ask "What did they discuss?" --system baseline
 ```
 
 ## 🏗️ Memory Systems
@@ -56,16 +56,41 @@ memory/
 ## 🔧 Commands
 
 ### Core Operations
-- `optimize --system <type>` - Optimize specific memory system
-- `evaluate --system <type>` - Evaluate with LOCOMO judge
-- `compare` - Compare all systems (base vs optimized)
-- `benchmark` - Comprehensive evaluation matrix
-- `ask <question> --system <type>` - Interactive Q&A
+```bash
+# Optimize with fast SIMBA (parallel)
+uv run python main.py optimize --system graph --method simba --threads 8 --limit 50
+
+# Optimize with other methods
+uv run python main.py optimize --system simple --method bootstrap --limit 30
+uv run python main.py optimize --system baseline --method mipro --limit 20
+
+# Evaluate with LOCOMO judge
+uv run python main.py evaluate --system simple --limit 20
+
+# Compare all systems (base vs optimized)
+uv run python main.py compare --limit 10
+
+# Comprehensive evaluation matrix
+uv run python main.py benchmark --limit 20
+
+# Interactive Q&A
+uv run python main.py ask "What was discussed?" --system baseline
+```
 
 ### Quick Scripts
-- `./run.sh compare` - Quick comparison
-- `./run.sh full-eval` - Complete pipeline
-- `./run.sh optimize graph` - Optimize graph memory
+```bash
+# Quick comparison (10 examples)
+./run.sh compare
+
+# Complete evaluation pipeline
+./run.sh full-eval
+
+# Optimize specific system
+./run.sh optimize graph
+
+# Interactive Q&A mode
+./run.sh ask
+```
 
 ## 📊 Evaluation Features
 
@@ -74,6 +99,31 @@ memory/
 3. **Optimization Tracking**: Base vs optimized performance
 4. **Parallel Processing**: 8x faster with threading
 5. **Detailed Metrics**: Per-category and overall scores
+
+## ⚡ Performance Optimization
+
+### Fast Optimization with SIMBA
+SIMBA is the fastest optimization method with built-in parallelization:
+
+```bash
+# Fast parallel optimization (8 threads)
+uv run python main.py optimize --method simba --threads 8 --limit 50
+
+# Even faster with fewer steps
+uv run python main.py optimize --method simba --threads 16 --limit 30
+```
+
+### Optimization Method Comparison
+| Method | Speed | Quality | Best For |
+|--------|-------|---------|----------|
+| `simba` | ⚡⚡⚡ Fast | High | Production use |
+| `bootstrap` | ⚡⚡ Medium | Medium | Quick prototyping |
+| `mipro` | ⚡ Slow | Highest | Research/best results |
+
+### Threading Guidelines
+- **Optimization**: Use 8-16 threads for SIMBA
+- **Evaluation**: Use 8 threads (default)
+- **Memory**: Graph memory is slowest, baseline fastest
 
 ## 💡 Key Innovations
 
@@ -95,3 +145,37 @@ graph           51.2%     59.7%      +8.5%
 ```
 
 *Using LOCOMO LLM judge on 50 test examples*
+
+## 🔧 Usage Notes
+
+### Shell Script Usage
+```bash
+# Correct - run shell script directly
+./run.sh compare
+
+# Incorrect - don't use uv run with shell scripts
+# uv run ./run.sh compare  # This will fail
+```
+
+### Python Commands
+```bash
+# Always use uv run for Python commands
+uv run python main.py compare --limit 5
+uv run python main.py optimize --system simple
+```
+
+### Troubleshooting
+1. **Permission Error**: `chmod +x run.sh`
+2. **Missing Dependencies**: `uv add dspy-ai click`
+3. **API Key**: `export TOGETHER_API_KEY="your-key"`
+4. **Data Files**: Ensure `data/locomo_*.json` files exist
+
+### Environment Setup
+```bash
+# One-time setup
+export TOGETHER_API_KEY="your-together-ai-key"
+uv add dspy-ai click
+
+# Verify installation
+uv run python main.py --help
+```
