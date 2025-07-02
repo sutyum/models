@@ -69,16 +69,21 @@ class DSPyMemory(dspy.Module):
         return dspy.Prediction(answer=answer)
 
 
+# LOCOMO signature for direct QA
+class ConversationQA(dspy.Signature):
+    """Answer questions based on conversation history."""
+    conversation = dspy.InputField(desc="conversation history")
+    question = dspy.InputField(desc="question about the conversation")
+    answer = dspy.OutputField(desc="answer based on conversation")
+
+
 # Example usage for LOCOMO
 class LOCOMOMemory(dspy.Module):
     """LOCOMO-specific memory module."""
     
     def __init__(self):
         super().__init__()
-        self.qa = dspy.ChainOfThought(
-            "conversation, question -> answer",
-            "Answer the question based on the conversation history. Be direct and concise."
-        )
+        self.qa = dspy.ChainOfThought(ConversationQA)
     
     def forward(self, conversation, question):
         return self.qa(conversation=conversation, question=question)

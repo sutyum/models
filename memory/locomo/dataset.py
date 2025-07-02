@@ -190,10 +190,10 @@ def load_locomo_dataset(data_path: str = "./data/locomo10.json") -> List[dspy.Ex
                 for qa in item['conversation']['qa']:
                     # Check if we have the conversation sessions data
                     conversation_text = ""
-                    if 'session_1' in item['conversation']:
+                    if 'conversation' in item['conversation'] and 'session_1' in item['conversation']['conversation']:
                         # Format conversation sessions
                         dataset = LocomoDataset.__new__(LocomoDataset)
-                        conversation_text = dataset._format_conversation(item['conversation'])
+                        conversation_text = dataset._format_conversation(item['conversation']['conversation'])
                     else:
                         # No conversation data available
                         conversation_text = "No conversation context available."

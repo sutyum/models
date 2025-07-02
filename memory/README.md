@@ -12,23 +12,24 @@ A minimal implementation supporting multiple memory architectures with comprehen
 ## 🚀 Quick Start
 
 ```bash
-# Set up environment  
-export TOGETHER_API_KEY="your-key-here"
+# Set up environment (choose one)
+export TOGETHER_API_KEY="your-together-key"    # For Together AI models
+export GROQ_API_KEY="your-groq-key"           # For Groq models
 
-# Compare all systems (quick)
-./run.sh compare
+# Compare all systems with different models
+./run.sh compare baseline qwen      # Together AI (default)
+./run.sh compare baseline llama     # Groq Llama
+./run.sh compare baseline mixtral   # Groq Mixtral
 
-# Optimize specific system
-./run.sh optimize simple
+# Optimize with fast Groq models
+./run.sh optimize simple llama
+./run.sh optimize graph gemma
 
-# Full evaluation pipeline
-./run.sh full-eval
-
-# Direct usage examples
-uv run python main.py compare --limit 5
-uv run python main.py optimize --system graph --limit 20
-uv run python main.py evaluate --system simple --limit 10
-uv run python main.py ask "What did they discuss?" --system baseline
+# Direct usage examples  
+uv run python main.py compare --model llama --limit 5
+uv run python main.py optimize --system graph --model mixtral --limit 20
+uv run python main.py evaluate --system simple --model gemma --limit 10
+uv run python main.py ask "What did they discuss?" --system baseline --model llama
 ```
 
 ## 🏗️ Memory Systems
@@ -38,6 +39,16 @@ uv run python main.py ask "What did they discuss?" --system baseline
 | `baseline` | Direct QA without explicit memory | DSPy ChainOfThought |
 | `simple` | Extract-store-retrieve memory | Multi-step DSPy pipeline |
 | `graph` | Adaptive memory with ReAct reasoning | Self-evolving memory state |
+
+## 🤖 Supported Models
+
+| Provider | Model | Key | Best For |
+|----------|-------|-----|----------|
+| **Together AI** | `qwen` | TOGETHER_API_KEY | Large context, high quality |
+| Together AI | `deepseek` | TOGETHER_API_KEY | Code reasoning, analysis |
+| **Groq** | `llama` | GROQ_API_KEY | Fast inference, general use |
+| Groq | `mixtral` | GROQ_API_KEY | Balanced speed/quality |
+| Groq | `gemma` | GROQ_API_KEY | Lightweight, efficient |
 
 ## 📁 Structure
 
@@ -57,39 +68,41 @@ memory/
 
 ### Core Operations
 ```bash
-# Optimize with fast SIMBA (parallel)
-uv run python main.py optimize --system graph --method simba --threads 8 --limit 50
+# Optimize with fast SIMBA + Groq models
+uv run python main.py optimize --system graph --model llama --method simba --threads 8 --limit 50
 
-# Optimize with other methods
-uv run python main.py optimize --system simple --method bootstrap --limit 30
-uv run python main.py optimize --system baseline --method mipro --limit 20
+# Try different model combinations
+uv run python main.py optimize --system simple --model mixtral --method bootstrap --limit 30
+uv run python main.py optimize --system baseline --model gemma --method mipro --limit 20
 
-# Evaluate with LOCOMO judge
-uv run python main.py evaluate --system simple --limit 20
+# Evaluate with different models
+uv run python main.py evaluate --system simple --model llama --limit 20
 
-# Compare all systems (base vs optimized)
-uv run python main.py compare --limit 10
+# Compare all systems across models
+uv run python main.py compare --model mixtral --limit 10
 
-# Comprehensive evaluation matrix
-uv run python main.py benchmark --limit 20
+# Cross-model benchmarking
+uv run python main.py benchmark --model llama --limit 20
 
-# Interactive Q&A
-uv run python main.py ask "What was discussed?" --system baseline
+# Interactive Q&A with any model
+uv run python main.py ask "What was discussed?" --system baseline --model gemma
 ```
 
 ### Quick Scripts
 ```bash
-# Quick comparison (10 examples)
-./run.sh compare
+# Quick comparison with different models
+./run.sh compare baseline qwen      # Together AI (default)
+./run.sh compare baseline llama     # Groq Llama (faster)
 
 # Complete evaluation pipeline
-./run.sh full-eval
+./run.sh full-eval baseline mixtral  # Full pipeline with Mixtral
 
-# Optimize specific system
-./run.sh optimize graph
+# Optimize with fast Groq models
+./run.sh optimize graph llama       # Fast optimization
+./run.sh optimize simple gemma      # Lightweight model
 
 # Interactive Q&A mode
-./run.sh ask
+./run.sh ask baseline llama         # Chat with any model
 ```
 
 ## 📊 Evaluation Features
@@ -167,15 +180,31 @@ uv run python main.py optimize --system simple
 ### Troubleshooting
 1. **Permission Error**: `chmod +x run.sh`
 2. **Missing Dependencies**: `uv add dspy-ai click`
-3. **API Key**: `export TOGETHER_API_KEY="your-key"`
+3. **API Keys**: Set `TOGETHER_API_KEY` or `GROQ_API_KEY`
 4. **Data Files**: Ensure `data/locomo_*.json` files exist
+5. **Model Selection**: Use `--model` flag or third script argument
 
 ### Environment Setup
 ```bash
-# One-time setup
+# Option 1: Together AI (high quality)
 export TOGETHER_API_KEY="your-together-ai-key"
+
+# Option 2: Groq (fast inference)  
+export GROQ_API_KEY="your-groq-key"
+
+# Option 3: Both (flexibility)
+export TOGETHER_API_KEY="your-together-key"
+export GROQ_API_KEY="your-groq-key"
+
+# Install dependencies
 uv add dspy-ai click
 
-# Verify installation
+# Verify with different models
 uv run python main.py --help
+
+# Quick functionality test
+uv run python main.py ask "What did they discuss?" --conversation "Alice: Hi Bob! Bob: Hello Alice!"
+
+# Full comparison test
+uv run python main.py compare --limit 2   # Test with default model
 ```

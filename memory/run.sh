@@ -4,47 +4,48 @@
 set -e
 
 # Check environment
-if [ -z "$TOGETHER_API_KEY" ]; then
-    echo "Error: Set TOGETHER_API_KEY environment variable"
+if [ -z "$TOGETHER_API_KEY" ] && [ -z "$GROQ_API_KEY" ]; then
+    echo "Error: Set TOGETHER_API_KEY or GROQ_API_KEY environment variable"
     exit 1
 fi
 
-# Default command and system
+# Default command, system, and model
 CMD=${1:-compare}
 SYSTEM=${2:-baseline}
+MODEL=${3:-qwen}
 
 case $CMD in
     optimize)
-        echo "Optimizing ${SYSTEM} memory system..."
-        uv run python main.py optimize --system "$SYSTEM" --method simba --threads 8 --limit 20
+        echo "Optimizing ${SYSTEM} memory system with ${MODEL}..."
+        uv run python main.py optimize --system "$SYSTEM" --model "$MODEL" --method simba --threads 8 --limit 20
         ;;
     evaluate)
-        echo "Evaluating ${SYSTEM} memory system..."
-        uv run python main.py evaluate --system "$SYSTEM" --limit 10
+        echo "Evaluating ${SYSTEM} memory system with ${MODEL}..."
+        uv run python main.py evaluate --system "$SYSTEM" --model "$MODEL" --limit 10
         ;;
     compare)
-        echo "Comparing all memory systems..."
-        uv run python main.py compare --limit 10
+        echo "Comparing all memory systems with ${MODEL}..."
+        uv run python main.py compare --model "$MODEL" --limit 10
         ;;
     benchmark)
-        echo "Running comprehensive benchmark..."
-        uv run python main.py benchmark --limit 20
+        echo "Running comprehensive benchmark with ${MODEL}..."
+        uv run python main.py benchmark --model "$MODEL" --limit 20
         ;;
     ask)
-        echo "Interactive Q&A mode with ${SYSTEM}..."
-        uv run python main.py ask "What did they discuss?" --system "$SYSTEM"
+        echo "Interactive Q&A mode with ${SYSTEM} using ${MODEL}..."
+        uv run python main.py ask "What did they discuss?" --system "$SYSTEM" --model "$MODEL"
         ;;
     full-eval)
-        echo "Full evaluation pipeline..."
+        echo "Full evaluation pipeline with ${MODEL}..."
         for sys in baseline simple graph; do
             echo "Optimizing $sys..."
-            uv run python main.py optimize --system "$sys" --method simba --threads 8 --limit 50
+            uv run python main.py optimize --system "$sys" --model "$MODEL" --method simba --threads 8 --limit 50
         done
         echo "Running comparison..."
-        uv run python main.py compare --limit 50
+        uv run python main.py compare --model "$MODEL" --limit 50
         ;;
     *)
-        echo "Usage: $0 [optimize|evaluate|compare|benchmark|ask|full-eval] [system]"
+        echo "Usage: $0 [optimize|evaluate|compare|benchmark|ask|full-eval] [system] [model]"
         echo ""
         echo "Commands:"
         echo "  optimize    - Optimize a specific memory system"
@@ -55,6 +56,11 @@ case $CMD in
         echo "  full-eval   - Complete evaluation pipeline"
         echo ""
         echo "Systems: baseline, simple, graph"
+        echo "Models: qwen, deepseek, llama, mixtral, gemma"
+        echo ""
+        echo "Examples:"
+        echo "  $0 compare baseline llama    # Compare with Llama on Groq"
+        echo "  $0 optimize graph mixtral    # Optimize graph memory with Mixtral"
         exit 1
         ;;
 esac
