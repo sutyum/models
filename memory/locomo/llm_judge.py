@@ -70,7 +70,7 @@ class LOCOMOJudge(dspy.Module):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=60),
+        wait=wait_exponential(multiplier=1, min=10, max=60),
         retry=retry_if_exception_type((Exception,)),
         retry_error_callback=lambda retry_state: print(f"Retrying judge evaluation after {retry_state.outcome.exception()}")
     )
