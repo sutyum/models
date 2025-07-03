@@ -255,7 +255,6 @@ def optimize(train_data, output, system, method, num_demos, limit, threads, mode
             max_steps=12,  # Increased from 6 for better optimization
             num_candidates=16,  # Increased from 8 for more exploration
             bsize=min(len(train), 16),  # Increased batch size
-            init_temperature=1.0,  # Add temperature for better exploration
         )
 
     optimized = optimizer.compile(memory_model, trainset=train)
