@@ -3,7 +3,6 @@ outputs
 *.sqlite
 mlartifacts/
 sota_*/
-*.pkl
 optimized_sota_memory/
 sota_memory_store/
 # Large data files

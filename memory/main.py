@@ -307,7 +307,7 @@ def optimize(train_data, output, system, method, num_demos, limit, threads, mode
 )
 @click.option("--model-path", help="Path to optimized model")
 @click.option("--limit", type=int, help="Limit test examples")
-@click.option("--threads", default=8, help="Number of threads")
+@click.option("--threads", default=4, help="Number of threads")
 @click.option("--output", help="Output JSON file for results")
 @click.option(
     "--model",
@@ -357,7 +357,7 @@ def evaluate(test_data, system, model_path, limit, threads, output, model):
     "--systems", default="baseline,simple,graph", help="Comma-separated list of systems"
 )
 @click.option("--limit", default=10, help="Number of examples")
-@click.option("--threads", default=8, help="Number of threads")
+@click.option("--threads", default=4, help="Number of threads")
 @click.option("--output-dir", default="results", help="Output directory")
 @click.option(
     "--model",
@@ -445,7 +445,7 @@ def compare(test_data, systems, limit, threads, output_dir, model):
 @click.option("--systems", default="baseline,simple,graph", help="Systems to benchmark")
 @click.option("--configs", default="base,optimized", help="Configurations to test")
 @click.option("--limit", default=10, help="Examples per evaluation")
-@click.option("--threads", default=8, help="Number of threads")
+@click.option("--threads", default=4, help="Number of threads")
 @click.option("--output", default="benchmark_results.json", help="Output file")
 @click.option(
     "--model",

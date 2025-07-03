@@ -4,7 +4,10 @@ LLM-as-Judge DSPy signatures and modules for LOCOMO evaluation.
 
 import dspy
 import os
+import json
+import re
 from typing import Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 
 class LLMJudgeSignature(dspy.Signature):
@@ -34,6 +37,43 @@ class LOCOMOJudge(dspy.Module):
         super().__init__()
         self.judge = dspy.ChainOfThought(LLMJudgeSignature)
 
+    def _parse_judgment(self, judgment_text: str) -> str:
+        """Parse and clean judgment text to extract CORRECT/WRONG."""
+        if not judgment_text:
+            return "WRONG"
+        
+        # Clean and normalize
+        cleaned = judgment_text.strip().upper()
+        
+        # Direct matches
+        if "CORRECT" in cleaned:
+            return "CORRECT"
+        elif "WRONG" in cleaned:
+            return "WRONG"
+        
+        # Try to extract from JSON-like structures
+        try:
+            # Look for JSON patterns
+            json_match = re.search(r'\{.*\}', judgment_text)
+            if json_match:
+                json_data = json.loads(json_match.group())
+                if 'judgment' in json_data:
+                    return json_data['judgment'].upper()
+        except:
+            pass
+        
+        # Fallback patterns
+        if any(word in cleaned for word in ['YES', 'TRUE', 'ACCEPT', 'PASS']):
+            return "CORRECT"
+        else:
+            return "WRONG"
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=60),
+        retry=retry_if_exception_type((Exception,)),
+        retry_error_callback=lambda retry_state: print(f"Retrying judge evaluation after {retry_state.outcome.exception()}")
+    )
     def forward(
         self,
         question: str,
@@ -49,10 +89,13 @@ class LOCOMOJudge(dspy.Module):
             question_category=question_category,
         )
 
+        # Parse judgment with fallback
+        judgment = self._parse_judgment(result.judgment)
+        
         return dspy.Prediction(
-            reasoning=result.reasoning,
-            judgment=result.judgment,
-            is_correct=result.judgment.upper() == "CORRECT",
+            reasoning=getattr(result, 'reasoning', 'No reasoning provided'),
+            judgment=judgment,
+            is_correct=judgment.upper() == "CORRECT",
         )
 
     def evaluate_answer(
