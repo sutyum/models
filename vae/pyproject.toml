@@ -1,0 +1,13 @@
+[project]
+name = "vae"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=4.0.0",
+    "flax>=0.10.7",
+    "jax>=0.6.2",
+    "matplotlib>=3.10.3",
+    "pillow>=11.3.0",
+]

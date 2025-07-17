@@ -4,7 +4,12 @@ version = "0.0.0"
 requires-python = ">=3.11"
 
 [tool.uv.workspace]
-members = ["gpt2", "gptlike", "memory"]
+members = [
+    "gpt2",
+ "gptlike",
+ "memory",
+ "vae",
+]
 # exclude = ["**/scratch*"]
 
 # Shared “dev tools” everyone needs:
