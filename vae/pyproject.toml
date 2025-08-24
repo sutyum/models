@@ -15,5 +15,6 @@ dependencies = [
     "matplotlib>=3.10.3",
     "numpy>=2.3.1",
     "optax>=0.2.5",
+    "penzai>=0.2.5",
     "pillow>=11.3.0",
 ]
