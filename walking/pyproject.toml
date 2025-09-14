@@ -1,0 +1,14 @@
+[project]
+name = "walking"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "brax>=0.12.1",
+    "mujoco>=3.3.5",
+    "mujoco-mjx>=3.3.5",
+    "playground>=0.0.2",
+    "rsl-rl-lib>=3.0.0",
+    "torch>=2.8.0",
+]
