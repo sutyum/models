@@ -13,11 +13,9 @@ Key concepts:
 - Conditional Generation: Actions are conditioned on states
 """
 
-import jax
-import jax.numpy as jnp
-from jax import random
-import equinox as eqx
-import optax
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from typing import Dict, Tuple
 from tqdm import tqdm
@@ -42,6 +40,7 @@ class FlowMatchingPolicy:
         model: VelocityNet,
         num_sampling_steps: int = 10,
         sampling_method: str = "euler",
+        device: torch.device = None,
     ):
         """
         Initialize the policy.
@@ -50,66 +49,53 @@ class FlowMatchingPolicy:
             model: Trained velocity network
             num_sampling_steps: Number of ODE integration steps
             sampling_method: "euler" or "heun"
+            device: Device to run on
         """
         self.model = model
         self.num_sampling_steps = num_sampling_steps
         self.sampling_method = sampling_method
+        self.device = device if device is not None else torch.device("cpu")
+        self.model.to(self.device)
 
-    def __call__(self, key: random.PRNGKey, state: np.ndarray) -> np.ndarray:
+    def __call__(self, state: np.ndarray) -> np.ndarray:
         """
         Generate action for given state.
 
         Args:
-            key: JAX random key
             state: Current state [state_dim]
 
         Returns:
             Action [action_dim]
         """
-        # Convert to JAX array if needed
-        state_jax = jnp.array(state)
+        # Convert to tensor
+        state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device)
 
         # Sample action using flow matching
-        action_jax = FlowMatching.sample_action(
-            self.model,
-            key,
-            state_jax,
-            num_steps=self.num_sampling_steps,
-            method=self.sampling_method,
-        )
+        with torch.no_grad():
+            action_tensor = FlowMatching.sample_action(
+                self.model,
+                state_tensor,
+                num_steps=self.num_sampling_steps,
+                method=self.sampling_method,
+                device=self.device,
+            )
 
         # Convert back to numpy
-        return np.array(action_jax)
+        return action_tensor.cpu().numpy()
 
 
-def create_batches(data: Dict[str, np.ndarray], batch_size: int, key: random.PRNGKey):
-    """
-    Create randomized batches from the dataset.
+class ExpertDataset(Dataset):
+    """PyTorch dataset for expert demonstrations."""
 
-    Args:
-        data: Dictionary with 'states' and 'actions'
-        batch_size: Batch size
-        key: JAX random key for shuffling
+    def __init__(self, states: np.ndarray, actions: np.ndarray):
+        self.states = torch.tensor(states, dtype=torch.float32)
+        self.actions = torch.tensor(actions, dtype=torch.float32)
 
-    Yields:
-        (states_batch, actions_batch) tuples
-    """
-    num_samples = data["states"].shape[0]
-    num_batches = num_samples // batch_size
+    def __len__(self):
+        return len(self.states)
 
-    # Shuffle indices
-    indices = random.permutation(key, num_samples)
-
-    for i in range(num_batches):
-        batch_indices = indices[i * batch_size : (i + 1) * batch_size]
-        states_batch = data["states"][batch_indices]
-        actions_batch = data["actions"][batch_indices]
-
-        # Convert to JAX arrays
-        states_batch = jnp.array(states_batch)
-        actions_batch = jnp.array(actions_batch)
-
-        yield states_batch, actions_batch
+    def __getitem__(self, idx):
+        return self.states[idx], self.actions[idx]
 
 
 def train_flow_matching_policy(
@@ -122,6 +108,7 @@ def train_flow_matching_policy(
     seed: int = 42,
     eval_every: int = 5,
     save_dir: str = "checkpoints",
+    device: str = "cpu",
 ) -> Tuple[VelocityNet, Dict]:
     """
     Train a flow matching policy from expert demonstrations.
@@ -136,6 +123,7 @@ def train_flow_matching_policy(
         seed: Random seed
         eval_every: Evaluate policy every N epochs
         save_dir: Directory to save checkpoints
+        device: Device to train on ("cpu" or "cuda")
 
     Returns:
         Trained model and training history
@@ -144,11 +132,14 @@ def train_flow_matching_policy(
     print("FLOW MATCHING FOR INVERTED PENDULUM")
     print("=" * 70)
 
+    # Set device
+    device = torch.device(device)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     # Create save directory
     os.makedirs(save_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    key = random.PRNGKey(seed)
 
     # Step 1: Collect expert demonstrations
     print("\n📊 Step 1: Collecting Expert Demonstrations")
@@ -166,14 +157,12 @@ def train_flow_matching_policy(
     state_dim = 3  # [cos(θ), sin(θ), θ_dot]
     action_dim = 1  # [torque]
 
-    key, subkey = random.split(key)
     model = VelocityNet(
-        key=subkey,
         action_dim=action_dim,
         state_dim=state_dim,
         hidden_dim=hidden_dim,
         num_layers=num_layers,
-    )
+    ).to(device)
 
     print(f"Model architecture:")
     print(f"  State dim: {state_dim}")
@@ -182,16 +171,17 @@ def train_flow_matching_policy(
     print(f"  Num layers: {num_layers}")
 
     # Count parameters
-    num_params = sum(
-        x.size for x in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
-    )
+    num_params = sum(p.numel() for p in model.parameters())
     print(f"  Total parameters: {num_params:,}")
+
+    # Create dataset and dataloader
+    dataset = ExpertDataset(expert_data["states"], expert_data["actions"])
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # Step 3: Setup optimizer
     print("\n⚙️  Step 3: Setting up Optimizer")
     print("-" * 70)
-    optimizer = optax.adam(learning_rate)
-    opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     print(f"Optimizer: Adam")
     print(f"Learning rate: {learning_rate}")
@@ -208,36 +198,28 @@ def train_flow_matching_policy(
         "epochs": [],
     }
 
-    @eqx.filter_jit
-    def train_step(model, opt_state, key, states, actions):
-        """Single training step with gradient update."""
-        loss, grads = eqx.filter_value_and_grad(FlowMatching.compute_loss)(
-            model, key, states, actions
-        )
-        updates, opt_state = optimizer.update(
-            grads, opt_state, eqx.filter(model, eqx.is_array)
-        )
-        model = eqx.apply_updates(model, updates)
-        return model, opt_state, loss
-
     best_return = -float("inf")
 
     for epoch in range(num_epochs):
         # Training
-        key, subkey = random.split(key)
+        model.train()
         epoch_losses = []
 
-        # Create batches for this epoch
-        batches = list(create_batches(expert_data, batch_size, subkey))
-
         for states_batch, actions_batch in tqdm(
-            batches, desc=f"Epoch {epoch+1}/{num_epochs}", leave=False
+            dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", leave=False
         ):
-            key, subkey = random.split(key)
-            model, opt_state, loss = train_step(
-                model, opt_state, subkey, states_batch, actions_batch
-            )
-            epoch_losses.append(float(loss))
+            states_batch = states_batch.to(device)
+            actions_batch = actions_batch.to(device)
+
+            # Compute loss
+            loss = FlowMatching.compute_loss(model, states_batch, actions_batch)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_losses.append(loss.item())
 
         mean_loss = np.mean(epoch_losses)
         history["train_loss"].append(mean_loss)
@@ -248,9 +230,9 @@ def train_flow_matching_policy(
         # Evaluation
         if (epoch + 1) % eval_every == 0 or epoch == num_epochs - 1:
             print(f"  Evaluating policy...")
-            key, subkey = random.split(key)
+            model.eval()
             eval_return = evaluate_policy(
-                model, num_episodes=5, num_sampling_steps=10, key=subkey
+                model, num_episodes=5, num_sampling_steps=10, device=device
             )
             history["eval_returns"].append(eval_return)
             print(f"  Eval return: {eval_return:.1f}")
@@ -258,13 +240,13 @@ def train_flow_matching_policy(
             # Save best model
             if eval_return > best_return:
                 best_return = eval_return
-                save_path = os.path.join(save_dir, f"best_model_{timestamp}.eqx")
-                eqx.tree_serialise_leaves(save_path, model)
+                save_path = os.path.join(save_dir, f"best_model_{timestamp}.pt")
+                torch.save(model.state_dict(), save_path)
                 print(f"  💾 Saved new best model (return: {eval_return:.1f})")
 
     # Save final model
-    final_path = os.path.join(save_dir, f"final_model_{timestamp}.eqx")
-    eqx.tree_serialise_leaves(final_path, model)
+    final_path = os.path.join(save_dir, f"final_model_{timestamp}.pt")
+    torch.save(model.state_dict(), final_path)
     print(f"\n💾 Saved final model to {final_path}")
 
     # Save history
@@ -286,7 +268,7 @@ def evaluate_policy(
     model: VelocityNet,
     num_episodes: int = 10,
     num_sampling_steps: int = 10,
-    key: random.PRNGKey = None,
+    device: torch.device = None,
     render: bool = False,
 ) -> float:
     """
@@ -296,17 +278,17 @@ def evaluate_policy(
         model: Trained velocity network
         num_episodes: Number of episodes to evaluate
         num_sampling_steps: Flow sampling steps
-        key: JAX random key
+        device: Device to run on
         render: Whether to visualize
 
     Returns:
         Mean episode return
     """
-    if key is None:
-        key = random.PRNGKey(0)
+    if device is None:
+        device = torch.device("cpu")
 
     env = PendulumEnv(render_mode="human" if render else None)
-    policy = FlowMatchingPolicy(model, num_sampling_steps=num_sampling_steps)
+    policy = FlowMatchingPolicy(model, num_sampling_steps=num_sampling_steps, device=device)
 
     returns = []
 
@@ -316,8 +298,7 @@ def evaluate_policy(
 
         for step in range(200):
             # Generate action using flow matching
-            key, subkey = random.split(key)
-            action = policy(subkey, state)
+            action = policy(state)
 
             # Take step
             state, reward, terminated, truncated, _ = env.step(action)
@@ -345,6 +326,7 @@ if __name__ == "__main__":
         num_layers=3,
         seed=42,
         eval_every=5,
+        device="cpu",
     )
 
     # Final evaluation
@@ -352,12 +334,11 @@ if __name__ == "__main__":
     print("FINAL EVALUATION")
     print("=" * 70)
 
-    key = random.PRNGKey(999)
     final_return = evaluate_policy(
         model,
         num_episodes=20,
         num_sampling_steps=20,  # Use more steps for final eval
-        key=key,
+        device=torch.device("cpu"),
         render=False,
     )
 

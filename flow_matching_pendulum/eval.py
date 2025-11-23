@@ -8,13 +8,9 @@ This script provides tools to:
 4. Analyze the flow field
 """
 
-import jax
-import jax.numpy as jnp
-from jax import random
-import equinox as eqx
+import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 import argparse
 import os
 
@@ -23,22 +19,21 @@ from pendulum_env import PendulumEnv, ExpertController
 from train import FlowMatchingPolicy
 
 
-def load_model(checkpoint_path: str, action_dim: int = 1, state_dim: int = 3) -> VelocityNet:
+def load_model(checkpoint_path: str, action_dim: int = 1, state_dim: int = 3, device: str = "cpu") -> VelocityNet:
     """
     Load a trained model from checkpoint.
 
     Args:
-        checkpoint_path: Path to .eqx checkpoint file
+        checkpoint_path: Path to .pt checkpoint file
         action_dim: Action dimension
         state_dim: State dimension
+        device: Device to load model on
 
     Returns:
         Loaded VelocityNet model
     """
-    # Create a dummy model with the same architecture
-    key = random.PRNGKey(0)
+    # Create a model with the same architecture
     model = VelocityNet(
-        key=key,
         action_dim=action_dim,
         state_dim=state_dim,
         hidden_dim=256,  # Should match training config
@@ -46,7 +41,10 @@ def load_model(checkpoint_path: str, action_dim: int = 1, state_dim: int = 3) ->
     )
 
     # Load the trained weights
-    model = eqx.tree_deserialise_leaves(checkpoint_path, model)
+    device_obj = torch.device(device)
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device_obj))
+    model.to(device_obj)
+    model.eval()
 
     return model
 
@@ -56,6 +54,7 @@ def evaluate_and_compare(
     num_episodes: int = 10,
     num_sampling_steps: int = 20,
     seed: int = 42,
+    device: str = "cpu",
 ):
     """
     Evaluate flow matching policy and compare with expert.
@@ -65,12 +64,14 @@ def evaluate_and_compare(
         num_episodes: Number of episodes to evaluate
         num_sampling_steps: Flow sampling steps
         seed: Random seed
+        device: Device to run on
     """
+    device_obj = torch.device(device)
     env = PendulumEnv()
-    policy = FlowMatchingPolicy(model, num_sampling_steps=num_sampling_steps)
+    policy = FlowMatchingPolicy(model, num_sampling_steps=num_sampling_steps, device=device_obj)
     expert = ExpertController()
 
-    key = random.PRNGKey(seed)
+    np.random.seed(seed)
 
     flow_returns = []
     expert_returns = []
@@ -84,8 +85,7 @@ def evaluate_and_compare(
         flow_return = 0
 
         for step in range(200):
-            key, subkey = random.split(key)
-            action = policy(subkey, state)
+            action = policy(state)
             state, reward, terminated, truncated, _ = env.step(action)
             flow_return += reward
 
@@ -134,6 +134,7 @@ def visualize_rollout(
     num_steps: int = 200,
     seed: int = 0,
     save_path: str = "rollout_comparison.png",
+    device: str = "cpu",
 ):
     """
     Visualize a rollout comparing flow policy and expert.
@@ -144,12 +145,12 @@ def visualize_rollout(
         num_steps: Number of steps to simulate
         seed: Random seed
         save_path: Path to save the plot
+        device: Device to run on
     """
+    device_obj = torch.device(device)
     env = PendulumEnv()
-    policy = FlowMatchingPolicy(model, num_sampling_steps=num_sampling_steps)
+    policy = FlowMatchingPolicy(model, num_sampling_steps=num_sampling_steps, device=device_obj)
     expert = ExpertController()
-
-    key = random.PRNGKey(seed)
 
     # Collect flow policy trajectory
     state = env.reset(seed=seed)
@@ -157,8 +158,7 @@ def visualize_rollout(
     flow_actions = []
 
     for step in range(num_steps):
-        key, subkey = random.split(key)
-        action = policy(subkey, state)
+        action = policy(state)
         flow_states.append(state)
         flow_actions.append(action)
         state, _, terminated, truncated, _ = env.step(action)
@@ -237,24 +237,26 @@ def visualize_flow_field(
     t: float = 0.5,
     state: np.ndarray = None,
     save_path: str = "flow_field.png",
+    device: str = "cpu",
 ):
     """
     Visualize the learned flow field at a specific time.
-
-    This shows how the velocity field v_θ(z, t, state) looks
-    in 2D action space (we project if action_dim > 2).
 
     Args:
         model: Trained velocity network
         t: Time parameter to visualize
         state: State to condition on (default: near-upright)
         save_path: Path to save the plot
+        device: Device to run on
     """
+    device_obj = torch.device(device)
+    model.to(device_obj)
+
     if state is None:
         # Default: pendulum nearly upright
         state = np.array([1.0, 0.0, 0.0])  # [cos(0), sin(0), 0]
 
-    state_jax = jnp.array(state)
+    state_tensor = torch.tensor(state, dtype=torch.float32, device=device_obj)
 
     # Create grid in action space
     # For 1D action (pendulum), we'll visualize action vs time
@@ -267,12 +269,13 @@ def visualize_flow_field(
         # Compute velocity at each grid point
         velocities = np.zeros_like(A)
 
-        for i in range(len(times)):
-            for j in range(len(actions)):
-                z = jnp.array([actions[j]])
-                t_val = times[i]
-                v = model(z, t_val, state_jax)
-                velocities[i, j] = float(v[0])
+        with torch.no_grad():
+            for i in range(len(times)):
+                for j in range(len(actions)):
+                    z = torch.tensor([[actions[j]]], dtype=torch.float32, device=device_obj)
+                    t_val = torch.tensor([times[i]], dtype=torch.float32, device=device_obj)
+                    v = model(z, t_val, state_tensor.unsqueeze(0))
+                    velocities[i, j] = v[0, 0].item()
 
         # Plot
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -297,41 +300,40 @@ def visualize_denoising_process(
     model: VelocityNet,
     state: np.ndarray,
     num_steps: int = 10,
-    key: random.PRNGKey = None,
     save_path: str = "denoising_process.png",
+    device: str = "cpu",
 ):
     """
     Visualize how noise is transformed into an action.
-
-    Shows the trajectory in action space as we integrate the ODE.
 
     Args:
         model: Trained velocity network
         state: State to condition on
         num_steps: Number of denoising steps
-        key: JAX random key
         save_path: Path to save the plot
+        device: Device to run on
     """
-    if key is None:
-        key = random.PRNGKey(0)
+    device_obj = torch.device(device)
+    model.to(device_obj)
 
-    state_jax = jnp.array(state)
+    state_tensor = torch.tensor(state, dtype=torch.float32, device=device_obj)
 
     # Sample initial noise
-    z = random.normal(key, shape=(model.action_dim,))
+    z = torch.randn(model.action_dim, device=device_obj)
 
     # Track trajectory
-    trajectory = [float(z[0])]
+    trajectory = [z[0].item()]
     times = [0.0]
 
     dt = 1.0 / num_steps
 
-    for step in range(num_steps):
-        t = step * dt
-        velocity = model(z, t, state_jax)
-        z = z + dt * velocity
-        trajectory.append(float(z[0]))
-        times.append((step + 1) * dt)
+    with torch.no_grad():
+        for step in range(num_steps):
+            t = torch.tensor([step * dt], dtype=torch.float32, device=device_obj)
+            velocity = model(z.unsqueeze(0), t, state_tensor.unsqueeze(0)).squeeze(0)
+            z = z + dt * velocity
+            trajectory.append(z[0].item())
+            times.append((step + 1) * dt)
 
     # Plot
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -355,7 +357,7 @@ def visualize_denoising_process(
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Flow Matching Policy")
     parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to model checkpoint (.eqx file)")
+                        help="Path to model checkpoint (.pt file)")
     parser.add_argument("--num-episodes", type=int, default=10,
                         help="Number of episodes to evaluate")
     parser.add_argument("--num-steps", type=int, default=20,
@@ -364,12 +366,14 @@ def main():
                         help="Random seed")
     parser.add_argument("--visualize", action="store_true",
                         help="Create visualizations")
+    parser.add_argument("--device", type=str, default="cpu",
+                        help="Device to run on (cpu or cuda)")
 
     args = parser.parse_args()
 
     # Load model
     print(f"Loading model from {args.checkpoint}...")
-    model = load_model(args.checkpoint)
+    model = load_model(args.checkpoint, device=args.device)
     print("✅ Model loaded successfully")
 
     # Evaluate
@@ -381,6 +385,7 @@ def main():
         num_episodes=args.num_episodes,
         num_sampling_steps=args.num_steps,
         seed=args.seed,
+        device=args.device,
     )
 
     # Visualizations
@@ -390,15 +395,14 @@ def main():
         print("=" * 70)
 
         # Rollout comparison
-        visualize_rollout(model, num_sampling_steps=args.num_steps, seed=args.seed)
+        visualize_rollout(model, num_sampling_steps=args.num_steps, seed=args.seed, device=args.device)
 
         # Flow field
-        visualize_flow_field(model, t=0.5)
+        visualize_flow_field(model, t=0.5, device=args.device)
 
         # Denoising process
-        key = random.PRNGKey(args.seed)
         test_state = np.array([1.0, 0.0, 0.0])  # Upright
-        visualize_denoising_process(model, test_state, num_steps=args.num_steps, key=key)
+        visualize_denoising_process(model, test_state, num_steps=args.num_steps, device=args.device)
 
         print("\n✅ All visualizations created!")
 

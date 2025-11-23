@@ -10,11 +10,11 @@ Key Papers:
 - Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow
 """
 
-import jax
-import jax.numpy as jnp
-from jax import random
-from typing import Callable, Tuple
-import equinox as eqx
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Tuple
+import math
 
 
 class FlowMatching:
@@ -35,10 +35,10 @@ class FlowMatching:
 
     @staticmethod
     def sample_flow_path(
-        key: random.PRNGKey,
-        target_data: jnp.ndarray,
+        target_data: torch.Tensor,
         t: float,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        device: torch.device = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Sample a point along the optimal transport flow path.
 
@@ -51,16 +51,19 @@ class FlowMatching:
             t ∈ [0, 1] - time parameter
 
         Args:
-            key: JAX random key
             target_data: Target sample (e.g., expert action), shape [..., action_dim]
             t: Time parameter in [0, 1]
+            device: Device to create tensors on
 
         Returns:
             z_t: Interpolated sample at time t
             velocity: Optimal velocity v* = x_1 - z_0 (what the model should predict)
         """
+        if device is None:
+            device = target_data.device
+
         # Sample Gaussian noise with same shape as target
-        z_0 = random.normal(key, shape=target_data.shape)
+        z_0 = torch.randn_like(target_data, device=device)
         x_1 = target_data
 
         # Linear interpolation: z_t = (1-t)·z_0 + t·x_1
@@ -76,11 +79,10 @@ class FlowMatching:
 
     @staticmethod
     def compute_loss(
-        model: eqx.Module,
-        key: random.PRNGKey,
-        states: jnp.ndarray,  # Shape: [batch, state_dim]
-        actions: jnp.ndarray,  # Shape: [batch, action_dim]
-    ) -> jnp.ndarray:
+        model: nn.Module,
+        states: torch.Tensor,  # Shape: [batch, state_dim]
+        actions: torch.Tensor,  # Shape: [batch, action_dim]
+    ) -> torch.Tensor:
         """
         Compute the Flow Matching loss.
 
@@ -96,7 +98,6 @@ class FlowMatching:
 
         Args:
             model: The velocity predictor network v_θ(z_t, t, state)
-            key: JAX random key
             states: Batch of states (conditions)
             actions: Batch of expert actions (targets)
 
@@ -104,43 +105,43 @@ class FlowMatching:
             Scalar loss value
         """
         batch_size = states.shape[0]
+        device = states.device
 
         # Sample random time steps for each batch element
         # Uniform t ~ U[0, 1]
-        key, subkey = random.split(key)
-        t = random.uniform(subkey, shape=(batch_size,))
+        t = torch.rand(batch_size, device=device)
 
         # For each (state, action) pair, sample a point on the flow path
-        # We use vmap to vectorize over the batch
-        key, *subkeys = random.split(key, batch_size + 1)
-        subkeys = jnp.array(subkeys)
+        z_t_list = []
+        velocity_target_list = []
 
-        def sample_single(key_i, action_i, t_i):
-            """Sample flow path for a single example."""
-            return FlowMatching.sample_flow_path(key_i, action_i, t_i)
+        for i in range(batch_size):
+            z_t, velocity_target = FlowMatching.sample_flow_path(
+                actions[i], t[i].item(), device
+            )
+            z_t_list.append(z_t)
+            velocity_target_list.append(velocity_target)
 
-        # Vectorize over batch
-        z_t_batch, velocity_target_batch = jax.vmap(sample_single)(
-            subkeys, actions, t
-        )
+        z_t_batch = torch.stack(z_t_list)
+        velocity_target_batch = torch.stack(velocity_target_list)
 
         # Predict velocity using our model
         # Model takes: (noisy_action, time, state) → predicted_velocity
-        velocity_pred_batch = jax.vmap(model)(z_t_batch, t, states)
+        velocity_pred_batch = model(z_t_batch, t, states)
 
         # Mean squared error between predicted and optimal velocity
-        loss = jnp.mean((velocity_pred_batch - velocity_target_batch) ** 2)
+        loss = F.mse_loss(velocity_pred_batch, velocity_target_batch)
 
         return loss
 
     @staticmethod
     def sample_action(
-        model: eqx.Module,
-        key: random.PRNGKey,
-        state: jnp.ndarray,
+        model: nn.Module,
+        state: torch.Tensor,
         num_steps: int = 20,
         method: str = "euler",
-    ) -> jnp.ndarray:
+        device: torch.device = None,
+    ) -> torch.Tensor:
         """
         Generate an action by solving the flow ODE.
 
@@ -150,27 +151,31 @@ class FlowMatching:
 
         Args:
             model: The velocity predictor network
-            key: JAX random key
             state: Current state to condition on, shape [state_dim]
             num_steps: Number of integration steps (more = better quality, slower)
             method: Integration method ("euler" or "heun")
+            device: Device to create tensors on
 
         Returns:
             Generated action, shape [action_dim]
         """
+        if device is None:
+            device = state.device
+
         # Infer action dimension from model
-        # Start with pure Gaussian noise
         action_dim = model.action_dim
-        z = random.normal(key, shape=(action_dim,))
+
+        # Start with pure Gaussian noise
+        z = torch.randn(action_dim, device=device)
 
         dt = 1.0 / num_steps
 
         for step in range(num_steps):
-            t = step * dt
+            t = torch.tensor([step * dt], device=device)
 
             if method == "euler":
                 # Simple Euler integration: z_{t+dt} = z_t + dt·v_θ(z_t, t)
-                velocity = model(z, t, state)
+                velocity = model(z.unsqueeze(0), t, state.unsqueeze(0)).squeeze(0)
                 z = z + dt * velocity
 
             elif method == "heun":
@@ -178,9 +183,10 @@ class FlowMatching:
                 # k1 = v_θ(z_t, t)
                 # k2 = v_θ(z_t + dt·k1, t+dt)
                 # z_{t+dt} = z_t + dt·(k1 + k2)/2
-                v1 = model(z, t, state)
+                v1 = model(z.unsqueeze(0), t, state.unsqueeze(0)).squeeze(0)
                 z_temp = z + dt * v1
-                v2 = model(z_temp, t + dt, state)
+                t_next = torch.tensor([t.item() + dt], device=device)
+                v2 = model(z_temp.unsqueeze(0), t_next, state.unsqueeze(0)).squeeze(0)
                 z = z + dt * (v1 + v2) / 2
 
             else:
@@ -189,7 +195,7 @@ class FlowMatching:
         return z
 
 
-class VelocityNet(eqx.Module):
+class VelocityNet(nn.Module):
     """
     Neural network that predicts the velocity field v_θ(z, t, state).
 
@@ -208,14 +214,8 @@ class VelocityNet(eqx.Module):
     - Output velocity vector (same shape as z)
     """
 
-    layers: list
-    action_dim: int = eqx.field(static=True)
-    state_dim: int = eqx.field(static=True)
-    time_embed_dim: int = eqx.field(static=True)
-
     def __init__(
         self,
-        key: random.PRNGKey,
         action_dim: int,
         state_dim: int,
         hidden_dim: int = 256,
@@ -226,22 +226,23 @@ class VelocityNet(eqx.Module):
         Initialize the velocity network.
 
         Args:
-            key: JAX random key for initialization
             action_dim: Dimension of action space
             state_dim: Dimension of state space
             hidden_dim: Hidden layer dimension
             num_layers: Number of MLP layers
             time_embed_dim: Dimension of time embedding (should be even)
         """
+        super().__init__()
+
         self.action_dim = action_dim
         self.state_dim = state_dim
+        self.time_embed_dim = time_embed_dim
 
         # Input dimension: action + time_embedding + state
         input_dim = action_dim + time_embed_dim + state_dim
 
         # Build MLP layers
         layers = []
-        keys = random.split(key, num_layers)
 
         for i in range(num_layers):
             if i == 0:
@@ -254,12 +255,11 @@ class VelocityNet(eqx.Module):
             else:
                 out_dim = hidden_dim
 
-            layers.append(eqx.nn.Linear(in_dim, out_dim, key=keys[i]))
+            layers.append(nn.Linear(in_dim, out_dim))
 
-        self.layers = layers
-        self.time_embed_dim = time_embed_dim
+        self.layers = nn.ModuleList(layers)
 
-    def time_embedding(self, t: jnp.ndarray) -> jnp.ndarray:
+    def time_embedding(self, t: torch.Tensor) -> torch.Tensor:
         """
         Create sinusoidal time embedding.
 
@@ -267,25 +267,36 @@ class VelocityNet(eqx.Module):
         Maps scalar t → vector with periodic features.
 
         Args:
-            t: Time scalar ∈ [0, 1]
+            t: Time tensor ∈ [0, 1], shape [batch] or []
 
         Returns:
-            Time embedding vector of shape [time_embed_dim]
+            Time embedding vector of shape [batch, time_embed_dim] or [time_embed_dim]
         """
+        # Ensure t has a batch dimension
+        if t.dim() == 0:
+            t = t.unsqueeze(0)
+            squeeze_output = True
+        else:
+            squeeze_output = False
+
         half_dim = self.time_embed_dim // 2
         # Frequencies: 2π, 4π, 8π, ..., 2^(half_dim) * π
-        freqs = 2 * jnp.pi * 2 ** jnp.arange(half_dim)
-        args = t * freqs
+        freqs = 2 * math.pi * torch.pow(2.0, torch.arange(half_dim, device=t.device))
+        args = t.unsqueeze(-1) * freqs  # [batch, half_dim]
         # Interleave sin and cos
-        embedding = jnp.concatenate([jnp.sin(args), jnp.cos(args)])
+        embedding = torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
+
+        if squeeze_output:
+            embedding = embedding.squeeze(0)
+
         return embedding
 
-    def __call__(
+    def forward(
         self,
-        z: jnp.ndarray,      # Noisy action, shape [action_dim]
-        t: jnp.ndarray,      # Time, scalar or shape []
-        state: jnp.ndarray,  # State, shape [state_dim]
-    ) -> jnp.ndarray:
+        z: torch.Tensor,      # Noisy action, shape [batch, action_dim] or [action_dim]
+        t: torch.Tensor,      # Time, shape [batch] or scalar
+        state: torch.Tensor,  # State, shape [batch, state_dim] or [state_dim]
+    ) -> torch.Tensor:
         """
         Predict velocity at (z, t, state).
 
@@ -295,22 +306,31 @@ class VelocityNet(eqx.Module):
             state: Conditioning state
 
         Returns:
-            Predicted velocity, shape [action_dim]
+            Predicted velocity, shape [batch, action_dim] or [action_dim]
         """
-        # Ensure t is a scalar (remove batch dimensions if present)
-        t = jnp.squeeze(t)
+        # Handle single sample vs batch
+        if z.dim() == 1:
+            z = z.unsqueeze(0)
+            state = state.unsqueeze(0) if state.dim() == 1 else state
+            t = t.unsqueeze(0) if t.dim() == 0 else t
+            squeeze_output = True
+        else:
+            squeeze_output = False
 
         # Compute time embedding
         t_embed = self.time_embedding(t)
 
         # Concatenate all inputs
-        x = jnp.concatenate([z, t_embed, state])
+        x = torch.cat([z, t_embed, state], dim=-1)
 
         # Forward through MLP with activation
         for i, layer in enumerate(self.layers):
             x = layer(x)
             if i < len(self.layers) - 1:  # No activation on last layer
-                x = jax.nn.silu(x)  # SiLU activation (smooth, works well for flows)
+                x = F.silu(x)  # SiLU activation (smooth, works well for flows)
+
+        if squeeze_output:
+            x = x.squeeze(0)
 
         return x
 
@@ -318,7 +338,7 @@ class VelocityNet(eqx.Module):
 # Example usage and testing
 if __name__ == "__main__":
     # Test the flow matching implementation
-    key = random.PRNGKey(0)
+    torch.manual_seed(0)
 
     # Dimensions
     action_dim = 1  # Pendulum has 1D action (torque)
@@ -326,9 +346,7 @@ if __name__ == "__main__":
     batch_size = 32
 
     # Create model
-    key, subkey = random.split(key)
     model = VelocityNet(
-        key=subkey,
         action_dim=action_dim,
         state_dim=state_dim,
         hidden_dim=128,
@@ -336,24 +354,20 @@ if __name__ == "__main__":
     )
 
     # Create dummy data
-    key, subkey = random.split(key)
-    states = random.normal(subkey, (batch_size, state_dim))
-    key, subkey = random.split(key)
-    actions = random.normal(subkey, (batch_size, action_dim))
+    device = torch.device("cpu")
+    states = torch.randn(batch_size, state_dim, device=device)
+    actions = torch.randn(batch_size, action_dim, device=device)
 
     # Compute loss
-    key, subkey = random.split(key)
-    loss = FlowMatching.compute_loss(model, subkey, states, actions)
-    print(f"Initial loss: {loss:.4f}")
+    loss = FlowMatching.compute_loss(model, states, actions)
+    print(f"Initial loss: {loss.item():.4f}")
 
     # Sample an action
-    key, subkey = random.split(key)
-    test_state = random.normal(subkey, (state_dim,))
-    key, subkey = random.split(key)
+    test_state = torch.randn(state_dim, device=device)
     sampled_action = FlowMatching.sample_action(
-        model, subkey, test_state, num_steps=10
+        model, test_state, num_steps=10, device=device
     )
     print(f"Sampled action shape: {sampled_action.shape}")
-    print(f"Sampled action: {sampled_action}")
+    print(f"Sampled action: {sampled_action.detach().cpu().numpy()}")
 
     print("\n✅ Flow matching implementation working correctly!")
