@@ -51,6 +51,41 @@ escape_sed() {
   printf '%s' "$1" | sed -e 's/[&/]/\\&/g'
 }
 
+extract_year() {
+  # Extract year from markdown file
+  # Looks for patterns like: **Authors / Venue / Year:** ... 2024
+  # or **Authors:** ... 2024
+  local file="$1"
+  local year=""
+
+  # Try to find year in Authors/Venue/Year line or Authors line
+  year=$(grep -m1 '^\*\*Authors' "$file" 2>/dev/null | grep -oE '20[0-9]{2}' | head -1 || true)
+
+  # If not found, look anywhere in the first 30 lines for a 4-digit year starting with 20
+  if [[ -z "$year" ]]; then
+    year=$(head -30 "$file" 2>/dev/null | grep -oE '20[0-9]{2}' | head -1 || true)
+  fi
+
+  printf '%s' "${year:-—}"
+}
+
+days_ago() {
+  # Calculate days between epoch timestamp and now
+  local mtime="$1"
+  local now
+  now=$(date +%s)
+  local diff=$((now - mtime))
+  local days=$((diff / 86400))
+
+  if [[ $days -eq 0 ]]; then
+    printf "today"
+  elif [[ $days -eq 1 ]]; then
+    printf "1 day"
+  else
+    printf "%dd" "$days"
+  fi
+}
+
 print_usage() {
   cat <<EOF
 Usage:
@@ -66,22 +101,41 @@ EOF
 }
 
 print_listing() {
+  # Build a list of unique paper names and their metadata
+  # Format: mtime|name|vibe_exists|vibe_year|read_exists|read_year
   local entries=()
+  local seen_papers=()
 
   shopt -s nullglob
 
-  for mode in vibe read; do
-    local dir="$SCRIPT_DIR/$mode"
-    [[ -d "$dir" ]] || continue
+  # First pass: collect all unique paper names
+  local all_names=()
 
-    for f in "$dir"/*.md; do
-      local mtime base name
-      mtime="$(STAT_MTIME "$f")"
-      base="$(basename "$f")"
-      name="${base%.md}"
-      entries+=("$mtime|$mode|$name|$f")
+  local vibe_dir="$SCRIPT_DIR/vibe"
+  if [[ -d "$vibe_dir" ]]; then
+    for f in "$vibe_dir"/*.md; do
+      local base="${f##*/}"
+      local name="${base%.md}"
+      all_names+=("$name")
     done
-  done
+  fi
+
+  local read_dir="$SCRIPT_DIR/read"
+  if [[ -d "$read_dir" ]]; then
+    for f in "$read_dir"/*.md; do
+      local base="${f##*/}"
+      local name="${base%.md}"
+      # Check if already in list
+      local found=false
+      for n in "${all_names[@]}"; do
+        if [[ "$n" == "$name" ]]; then
+          found=true
+          break
+        fi
+      done
+      $found || all_names+=("$name")
+    done
+  fi
 
   shopt -u nullglob
 
@@ -89,22 +143,80 @@ print_listing() {
   echo "Existing papers (most recent first):"
   echo
 
-  if [[ ${#entries[@]} -eq 0 ]]; then
+  if [[ ${#all_names[@]} -eq 0 ]]; then
     echo "  (none yet – create one with: $(basename "$0") --vibe DeepMimic)"
     echo
     return
   fi
 
-  printf "%-6s | %-24s | %-16s | %s\n" "Mode" "Paper" "Modified" "File"
-  printf "%s\n" "-------+--------------------------+------------------+----------------------------------------"
+  # Second pass: for each paper, gather metadata
+  for name in "${all_names[@]}"; do
+    local vibe_file="$vibe_dir/${name}.md"
+    local read_file="$read_dir/${name}.md"
 
-  printf '%s\n' "${entries[@]}" \
-    | sort -t'|' -k1,1nr \
-    | while IFS='|' read -r m mode name path; do
-        local ts
-        ts="$(FORMAT_EPOCH "$m")"
-        printf "%-6s | %-24s | %-16s | %s\n" "$mode" "$name" "$ts" "$path"
-      done
+    local vibe_exists=0 vibe_year="—" vibe_mtime=0
+    local read_exists=0 read_year="—" read_mtime=0
+
+    if [[ -f "$vibe_file" ]]; then
+      vibe_exists=1
+      vibe_mtime="$(STAT_MTIME "$vibe_file")"
+      vibe_year="$(extract_year "$vibe_file")"
+    fi
+
+    if [[ -f "$read_file" ]]; then
+      read_exists=1
+      read_mtime="$(STAT_MTIME "$read_file")"
+      read_year="$(extract_year "$read_file")"
+    fi
+
+    # Use most recent mtime for sorting
+    local latest_mtime=$vibe_mtime
+    [[ $read_mtime -gt $latest_mtime ]] && latest_mtime=$read_mtime
+
+    entries+=("$latest_mtime|$name|$vibe_exists|$vibe_year|$vibe_mtime|$read_exists|$read_year|$read_mtime")
+  done
+
+  # ANSI color codes
+  local COLOR_VIBE='\033[36m'      # cyan - vibe only
+  local COLOR_READ='\033[32m'      # green - read only
+  local COLOR_BOTH='\033[1;33m'    # bold yellow - both
+  local COLOR_RESET='\033[0m'
+
+  printf "%-11s | %-28s | %-6s | %-8s | %s\n" "Status" "Paper" "Year" "Age" "Files"
+  printf "%s\n" "------------+------------------------------+--------+----------+-------------------------"
+
+  # Sort and display
+  printf '%s\n' "${entries[@]}" | sort -t'|' -k1,1nr | while IFS='|' read -r latest_mtime name vibe_exists vibe_year vibe_mtime read_exists read_year read_mtime; do
+    local status year age files color
+
+    # Determine status based on what exists
+    if [[ "$vibe_exists" == "1" && "$read_exists" == "1" ]]; then
+      status="vibe + read"
+      color="$COLOR_BOTH"
+      # Prefer read year, fall back to vibe year
+      year="$read_year"
+      [[ "$year" == "—" ]] && year="$vibe_year"
+      files="vibe/$name.md, read/$name.md"
+      # Age from most recent
+      local recent_mtime=$vibe_mtime
+      [[ $read_mtime -gt $recent_mtime ]] && recent_mtime=$read_mtime
+      age="$(days_ago "$recent_mtime")"
+    elif [[ "$vibe_exists" == "1" ]]; then
+      status="vibe"
+      color="$COLOR_VIBE"
+      year="$vibe_year"
+      files="vibe/$name.md"
+      age="$(days_ago "$vibe_mtime")"
+    else
+      status="read"
+      color="$COLOR_READ"
+      year="$read_year"
+      files="read/$name.md"
+      age="$(days_ago "$read_mtime")"
+    fi
+
+    printf "${color}%-11s${COLOR_RESET} | %-28s | %-6s | %-8s | %s\n" "$status" "$name" "$year" "$age" "$files"
+  done
 
   echo
 }
