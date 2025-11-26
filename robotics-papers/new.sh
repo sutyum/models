@@ -1,36 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CLI to allow users to start reading a new paper in vibe mode or in read mode.
+# CLI to manage paper reading notes in "vibe" and "read" modes.
 #
 # Usage:
-#   new.sh [--vibe | --read] [PaperName]
-#
-# If no mode is specified, defaults to vibe mode.
-# If no PaperName is given, defaults to YYYY-MM.
+#   new.sh                     # show usage + list existing vibe/read notes
+#   new.sh --vibe <PaperName>  # create vibe/<PaperName>.md from VIBE.md
+#   new.sh --read <PaperName>  # create read/<PaperName>.md from READ.md (templated from vibe if available)
+#   new.sh <PaperName>         # shorthand for: new.sh --vibe <PaperName>
 #
 # Behavior:
-#   - Vibe mode:
-#       VIBE.md -> vibe/<PaperName>.md
-#   - Read mode:
-#       READ.md -> read/<PaperName>.md
-#       And if vibe/<PaperName>.md exists, use it to fill some fields in READ.md:
-#         * [Title]
-#         * **Authors:**
-#         * **Link:**
+#   - Name is mandatory for creating a file.
+#   - READ.md and VIBE.md are markdown templates stored next to this script.
+#   - For --read:
+#       * Uses READ.md as template.
+#       * If vibe/<PaperName>.md exists, pulls basic fields from it:
+#           - [Title] (from "# Quick Screen: ...")
+#           - **Authors:** (from "**Authors / Venue / Year:**")
+#           - **Link:** (from "**Link:**")
+#   - For both modes, if [Title] appears in the template, it is replaced
+#     with a chosen title (PaperName or title from vibe).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-MODE="vibe"    # default mode
-PAPER_NAME=""
+# --- Portable helpers: sed -i, stat, date ------------------------------------
 
-# Detect sed -i flavor (GNU vs BSD/macOS)
+# sed -i (GNU vs BSD)
 if sed --version >/dev/null 2>&1; then
-  # GNU sed
   SED_INPLACE=(sed -i)
 else
-  # BSD/macOS sed
   SED_INPLACE=(sed -i '')
+fi
+
+# stat mtime (GNU vs BSD)
+if stat -c '%Y' "$SCRIPT_DIR" >/dev/null 2>&1; then
+  STAT_MTIME() { stat -c '%Y' "$1"; }
+else
+  STAT_MTIME() { stat -f '%m' "$1"; }
+fi
+
+# date from epoch (GNU vs BSD)
+if date -d @0 +%Y >/dev/null 2>&1; then
+  FORMAT_EPOCH() { date -d "@$1" '+%Y-%m-%d %H:%M'; }
+else
+  FORMAT_EPOCH() { date -r "$1" '+%Y-%m-%d %H:%M'; }
 fi
 
 escape_sed() {
@@ -38,37 +51,105 @@ escape_sed() {
   printf '%s' "$1" | sed -e 's/[&/]/\\&/g'
 }
 
-# --- Parse arguments ---
+print_usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0")                     Show this help and list existing vibe/read notes
+  $(basename "$0") --vibe <PaperName>  Create vibe notes for a paper
+  $(basename "$0") --read <PaperName>  Create deep-read notes for a paper (templated from vibe if available)
+  $(basename "$0") <PaperName>         Shorthand for: $(basename "$0") --vibe <PaperName>
 
-if [[ $# -gt 0 ]]; then
-  case "$1" in
-    --read)
-      MODE="read"
-      shift
-      ;;
-    --vibe)
-      MODE="vibe"
-      shift
-      ;;
-    -h|--help)
-      echo "Usage: $0 [--vibe | --read] [PaperName]"
-      exit 0
-      ;;
-    *)
-      # No explicit mode flag; fall through, treat $1 as part of paper name
-      ;;
-  esac
+Templates:
+  VIBE.md  Quick-screen template for first-pass reads
+  READ.md  Deep analysis template for serious reads
+EOF
+}
+
+print_listing() {
+  local entries=()
+
+  shopt -s nullglob
+
+  for mode in vibe read; do
+    local dir="$SCRIPT_DIR/$mode"
+    [[ -d "$dir" ]] || continue
+
+    for f in "$dir"/*.md; do
+      local mtime base name
+      mtime="$(STAT_MTIME "$f")"
+      base="$(basename "$f")"
+      name="${base%.md}"
+      entries+=("$mtime|$mode|$name|$f")
+    done
+  done
+
+  shopt -u nullglob
+
+  echo
+  echo "Existing papers (most recent first):"
+  echo
+
+  if [[ ${#entries[@]} -eq 0 ]]; then
+    echo "  (none yet – create one with: $(basename "$0") --vibe DeepMimic)"
+    echo
+    return
+  fi
+
+  printf "%-6s | %-24s | %-16s | %s\n" "Mode" "Paper" "Modified" "File"
+  printf "%s\n" "-------+--------------------------+------------------+----------------------------------------"
+
+  printf '%s\n' "${entries[@]}" \
+    | sort -t'|' -k1,1nr \
+    | while IFS='|' read -r m mode name path; do
+        local ts
+        ts="$(FORMAT_EPOCH "$m")"
+        printf "%-6s | %-24s | %-16s | %s\n" "$mode" "$name" "$ts" "$path"
+      done
+
+  echo
+}
+
+# --- Argument parsing --------------------------------------------------------
+
+MODE=""        # "vibe" or "read"
+PAPER_NAME=""
+
+if [[ $# -eq 0 ]]; then
+  print_usage
+  print_listing
+  exit 0
 fi
 
-# Remaining args (if any) form the paper name
-if [[ $# -gt 0 ]]; then
-  PAPER_NAME="$*"
-else
-  PAPER_NAME="$(date +"%Y-%m")"
+case "${1-}" in
+  --read)
+    MODE="read"
+    shift
+    ;;
+  --vibe)
+    MODE="vibe"
+    shift
+    ;;
+  -h|--help)
+    print_usage
+    print_listing
+    exit 0
+    ;;
+esac
+
+if [[ $# -eq 0 ]]; then
+  echo "Error: paper name is required." >&2
+  echo
+  print_usage
+  exit 1
 fi
 
-# Filename-safe version
+PAPER_NAME="$*"
 SAFE_NAME="${PAPER_NAME// /_}"
+
+# Default mode if not explicitly set: vibe
+if [[ -z "$MODE" ]]; then
+  MODE="vibe"
+fi
 
 READ_TEMPLATE="$SCRIPT_DIR/READ.md"
 VIBE_TEMPLATE="$SCRIPT_DIR/VIBE.md"
@@ -80,7 +161,7 @@ TARGET_FILE="$TARGET_DIR/${SAFE_NAME}.md"
 VIBE_NOTES_DIR="$SCRIPT_DIR/vibe"
 VIBE_NOTES_FILE="$VIBE_NOTES_DIR/${SAFE_NAME}.md"
 
-# --- Choose template and sanity-check ---
+# --- Pick template and basic checks -----------------------------------------
 
 if [[ "$MODE" == "read" ]]; then
   TEMPLATE_FILE="$READ_TEMPLATE"
@@ -101,62 +182,51 @@ if [[ -e "$TARGET_FILE" ]]; then
   exit 1
 fi
 
-# --- Create base file from template ---
+# --- Resolve title to insert into [Title] ------------------------------------
+
+TITLE="$PAPER_NAME"
+
+# If we're in read mode and a vibe file exists, prefer the title from vibe notes
+if [[ "$MODE" == "read" && -f "$VIBE_NOTES_FILE" ]]; then
+  V_TITLE_LINE="$(grep -m1 '^# Quick Screen:' "$VIBE_NOTES_FILE" || true)"
+  V_TITLE_VAL="$(printf '%s' "$V_TITLE_LINE" | sed 's/^# Quick Screen:[[:space:]]*//')"
+  if [[ -n "$V_TITLE_VAL" && "$V_TITLE_VAL" != "[Title]" ]]; then
+    TITLE="$V_TITLE_VAL"
+  fi
+fi
+
+# --- Create base file from template ------------------------------------------
 
 cp "$TEMPLATE_FILE" "$TARGET_FILE"
 
-# --- In all cases, at least set [Title] from PAPER_NAME if present ---
-
-TITLE_FROM_NAME="$PAPER_NAME"
-
-# Fill [Title] with the paper name first (will be overwritten by vibe data if available)
+# Replace [Title] (if present) with resolved title
 if grep -q '\[Title\]' "$TARGET_FILE"; then
-  esc_title="$(escape_sed "$TITLE_FROM_NAME")"
-  # Replace the first occurrence of [Title]
-  "${SED_INPLACE[@]}" "0,/\\[Title\\]/s//${esc_title}/" "$TARGET_FILE"
+  esc_title="$(escape_sed "$TITLE")"
+  "${SED_INPLACE[@]}" "s/\\[Title\\]/${esc_title}/g" "$TARGET_FILE"
 fi
 
-# --- If read mode, use vibe notes as a data source to fill fields ---
+# --- If read mode, template authors/link from vibe if available --------------
 
 if [[ "$MODE" == "read" && -f "$VIBE_NOTES_FILE" ]]; then
-  # Extract title from vibe file: '# Quick Screen: Something'
-  TITLE_LINE="$(grep -m1 '^# Quick Screen:' "$VIBE_NOTES_FILE" || true)"
-  TITLE_VAL="$(printf '%s' "$TITLE_LINE" | sed 's/^# Quick Screen:[[:space:]]*//')"
-  # If user filled title and it's not the placeholder, override the title in READ
-  if [[ -n "$TITLE_VAL" && "$TITLE_VAL" != "[Title]" ]]; then
-    esc_title="$(escape_sed "$TITLE_VAL")"
-    if grep -q '\[Title\]' "$TARGET_FILE"; then
-      "${SED_INPLACE[@]}" "0,/\\[Title\\]/s//${esc_title}/" "$TARGET_FILE"
-    else
-      # Fallback: replace the heading line with the new title
-      "${SED_INPLACE[@]}" "1s/^# Paper Analysis: .*/# Paper Analysis: ${esc_title}/" "$TARGET_FILE"
-    fi
-  fi
-
-  # Extract authors/venue/year line
+  # Authors / Venue / Year
   AVY_LINE="$(grep -m1 '^\*\*Authors / Venue / Year:\*\*' "$VIBE_NOTES_FILE" || true)"
   AVY_VAL="$(printf '%s' "$AVY_LINE" | sed 's/^\*\*Authors \/ Venue \/ Year:\*\*[[:space:]]*//')"
 
   if [[ -n "$AVY_VAL" ]]; then
     esc_avy="$(escape_sed "$AVY_VAL")"
-    # Put entire string into Authors; user can cleanly split if they want
     if grep -q '^\*\*Authors:\*\*' "$TARGET_FILE"; then
-      "${SED_INPLACE[@]}" "s/^\\*\\*Authors:\\*\\*[[:space:]]*/**Authors:** ${esc_avy}/" "$TARGET_FILE"
-    fi
-    # Optionally also copy to Venue/Year if blank
-    if grep -q '^\*\*Venue\/Year:\*\*' "$TARGET_FILE"; then
-      "${SED_INPLACE[@]}" "s/^\\*\\*Venue\/Year:\\*\\*[[:space:]]*/**Venue\/Year:** ${esc_avy}/" "$TARGET_FILE"
+      "${SED_INPLACE[@]}" "s/^\\*\\*Authors:\\*\\*[[:space:]]*/**Authors:** ${esc_avy}\n/" "$TARGET_FILE"
     fi
   fi
 
-  # Extract link
+  # Link
   LINK_LINE="$(grep -m1 '^\*\*Link:\*\*' "$VIBE_NOTES_FILE" || true)"
   LINK_VAL="$(printf '%s' "$LINK_LINE" | sed 's/^\*\*Link:\*\*[[:space:]]*//')"
 
   if [[ -n "$LINK_VAL" ]]; then
     esc_link="$(escape_sed "$LINK_VAL")"
     if grep -q '^\*\*Link:\*\*' "$TARGET_FILE"; then
-      "${SED_INPLACE[@]}" "s/^\\*\\*Link:\\*\\*[[:space:]]*/**Link:** ${esc_link}/" "$TARGET_FILE"
+      "${SED_INPLACE[@]}" "s/^\\*\\*Link:\\*\\*[[:space:]]*/**Link:** ${esc_link}\n/" "$TARGET_FILE"
     fi
   fi
 
@@ -165,13 +235,12 @@ else
   IMPORT_NOTE=""
 fi
 
-# --- Done ---
+# --- Final output ------------------------------------------------------------
 
-echo "Created new $MODE paper${IMPORT_NOTE}:"
-echo "  Name:   $PAPER_NAME"
-echo "  Path:   $TARGET_FILE"
-echo "  Source: $TEMPLATE_FILE"
+echo "Created new $MODE note${IMPORT_NOTE}:"
+echo "  Paper: $PAPER_NAME"
+echo "  File:  $TARGET_FILE"
+echo "  From:  $TEMPLATE_FILE"
 if [[ "$MODE" == "read" && -f "$VIBE_NOTES_FILE" ]]; then
-  echo "  Vibe source: $VIBE_NOTES_FILE"
+  echo "  Vibe:  $VIBE_NOTES_FILE"
 fi
-echo "You can start editing it now!"
