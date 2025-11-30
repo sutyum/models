@@ -1,17 +1,18 @@
-# Quick Screen: OpenVLA - An open-source vision-language-action model
+# Quick Screen: Pi0 - A vision-language-action flow model for general robot control
 
-**Authors / Venue / Year:** Moo Jin Kim, ..., <u>Sergey Levine</u>, Percy Liang, <u>Chelsea Finn</u>
-**Link:** https://arxiv.org/pdf/2406.09246
+**Authors / Venue / Year:** Kevin Black, ..., <u>Chelsea Finn</u>, ..., <u>Sergey Levine</u>, ..., Ury Zhilinsky
+**Link:** https://arxiv.org/pdf/2410.24164
 
 ---
 
 ## 30-Second Skim (Abstract + Figures)
 
 **What's the claim?** (One line)
-Open weight and code for a VLA beating 2024 closed source SOTA - Google's RT-2-X.
+Introduces flow matching architecture for building VLAs - in order to achieve higher generalization over methods like OpenVLA and RT-2.
 
 **The figure that tells the story:** (Figure #)
-Figure 2
+Figure 1/3. Both show the basic architecture, embodiments and dataset composition.
+
 
 **Task domain:** [x] Manipulation  [ ] Locomotion  [ ] Navigation  [x] Multi-task  [ ] Other: ___
 
@@ -21,7 +22,7 @@ Figure 2
 
 | Relevant to... | Yes/No | How? |
 |----------------|--------|------|
-| VLA / embodied AI | Yes | An open source VLA |
+| VLA / embodied AI | Yes | Open wight VLA with use of some proprietary data |
 | Motor control / low-level |  |  |
 | Sim2Real |  |  |
 | Data efficiency |  |  |
@@ -38,18 +39,17 @@ Figure 2
 - [x] Clear failure cases shown
 
 **Red flags spotted:**
-No ablation, so would have to be careful to draw conclusions about the 2 encoder concept (DINOv2 + SigLIP).
 
 ---
 
 ## Gut Check
 
-**Novelty:** [ ] Incremental  [x] Solid contribution  [ ] Potentially big idea
+**Novelty:** [x] Incremental  [ ] Solid contribution  [ ] Potentially big idea
 
-**Could I explain the core idea right now?** [x] Yes  [ ] Vaguely  [ ] No (complexity signal)
+**Could I explain the core idea right now?** [ ] Yes  [x] Vaguely  [ ] No (complexity signal)
 
 **One thing that made me curious:**
-The two image encoders and also action tokenization.
+Use of flow matching. Why is this useful enough?
 
 ---
 
