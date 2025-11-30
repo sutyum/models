@@ -44,7 +44,7 @@ Figure 1/3. Both show the basic architecture, embodiments and dataset compositio
 
 ## Gut Check
 
-**Novelty:** [x] Incremental  [ ] Solid contribution  [ ] Potentially big idea
+**Novelty:** [ ] Incremental  [x] Solid contribution  [ ] Potentially big idea
 
 **Could I explain the core idea right now?** [ ] Yes  [x] Vaguely  [ ] No (complexity signal)
 
