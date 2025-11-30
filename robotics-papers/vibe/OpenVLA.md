@@ -1,6 +1,6 @@
 # Quick Screen: OpenVLA - An open-source vision-language-action model
 
-**Authors / Venue / Year:** Moo Jin Kim, ..., <u>Sergey Levine</u>, Percy Liang, <u>Chelsea Finn</u>
+**Authors / Venue / Year:** Moo Jin Kim, ..., <u>Sergey Levine</u>, Percy Liang, <u>Chelsea Finn</u> / Arxiv / Sep 2024
 **Link:** https://arxiv.org/pdf/2406.09246
 
 ---

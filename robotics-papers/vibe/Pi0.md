@@ -1,6 +1,6 @@
 # Quick Screen: Pi0 - A vision-language-action flow model for general robot control
 
-**Authors / Venue / Year:** Kevin Black, ..., <u>Chelsea Finn</u>, ..., <u>Sergey Levine</u>, ..., Ury Zhilinsky
+**Authors / Venue / Year:** Kevin Black, ..., <u>Chelsea Finn</u>, ..., <u>Sergey Levine</u>, ..., Ury Zhilinsky / Arxiv / Oct 24
 **Link:** https://arxiv.org/pdf/2410.24164
 
 ---
